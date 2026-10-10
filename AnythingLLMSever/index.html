@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AnythingLLM 文档上传</title>
+<style>
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; color: #222; }
+  label { display: block; margin: 12px 0 4px; font-size: 14px; }
+  input[type=text] { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+  button { margin-top: 16px; padding: 10px 22px; font-size: 15px; border: 0; border-radius: 4px; background: #2563eb; color: #fff; cursor: pointer; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  #log { margin-top: 20px; padding: 12px; background: #f6f7f9; border-radius: 4px; font-size: 13px; white-space: pre-wrap; max-height: 420px; overflow: auto; }
+  .ok { color: #15803d; }
+  .err { color: #b91c1c; }
+</style>
+</head>
+<body>
+<h2>AnythingLLM 文档上传（自动向量化 → 第一个工作区）</h2>
+
+<label>服务器地址</label>
+<input type="text" id="host" value="http://localhost:3001">
+
+<label>API Key</label>
+<input type="password" id="key" autocomplete="off" placeholder="在 AnythingLLM 设置页生成，填写后会自动记住到本机浏览器">
+
+<label>选择文档（可多选）</label>
+<input type="file" id="files" multiple>
+
+<button id="btn">上传并嵌入</button>
+<div id="log"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const KEY_STORE = "anythingllm.apiKey";
+$("host").value = localStorage.getItem("anythingllm.host") || $("host").value;
+$("key").value = localStorage.getItem(KEY_STORE) || "";
+const persist = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+$("host").addEventListener("change", (e) => persist("anythingllm.host", e.target.value));
+$("key").addEventListener("change", (e) => persist(KEY_STORE, e.target.value.trim()));
+const log = (text, cls) => {
+  const p = document.createElement("div");
+  if (cls) p.className = cls;
+  p.textContent = text;
+  $("log").appendChild(p);
+  $("log").scrollTop = $("log").scrollHeight;
+};
+
+async function firstWorkspace(host, key) {
+  const res = await fetch(`${host}/api/v1/workspaces`, { headers: { Authorization: `Bearer ${key}` } });
+  if (!res.ok) throw new Error(`获取工作区列表失败: HTTP ${res.status}`);
+  const { workspaces } = await res.json();
+  if (!workspaces || !workspaces.length) throw new Error("没有找到任何工作区");
+  return workspaces[0];
+}
+
+async function upload(host, key, slug, file) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("addToWorkspaces", slug);
+  const res = await fetch(`${host}/api/v1/document/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}` },
+    body: form,
+  });
+  const body = await res.json();
+  if (!res.ok || body.success === false) throw new Error(body.error || `HTTP ${res.status}`);
+  const doc = body.documents && body.documents[0];
+  return doc ? `${doc.title}（${doc.wordCount} 词）` : "已上传";
+}
+
+$("btn").onclick = async () => {
+  const host = $("host").value.replace(/\/+$/, "");
+  const key = $("key").value.trim();
+  const files = [...$("files").files];
+  $("log").innerHTML = "";
+  if (!files.length) return log("请先选择文件", "err");
+
+  $("btn").disabled = true;
+  try {
+    const ws = await firstWorkspace(host, key);
+    log(`目标工作区：${ws.name}（${ws.slug}）`);
+    for (const file of files) {
+      try {
+        log(`上传中：${file.name} ...`);
+        log(`  ✓ ${file.name} -> ${await upload(host, key, ws.slug, file)}`, "ok");
+      } catch (e) {
+        log(`  ✗ ${file.name} -> ${e.message}`, "err");
+      }
+    }
+    log("全部完成。");
+  } catch (e) {
+    log(`错误：${e.message}`, "err");
+  } finally {
+    $("btn").disabled = false;
+  }
+};
+</script>
+</body>
+</html>

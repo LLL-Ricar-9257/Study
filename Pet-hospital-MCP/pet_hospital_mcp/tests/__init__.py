@@ -1,0 +1,1 @@
+"""让 tests 可以用 ``from .conftest import ...`` 共享夹具与样本数据。"""

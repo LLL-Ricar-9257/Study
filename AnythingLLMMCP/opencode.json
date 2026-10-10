@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "anythingllm": {
+      "type": "local",
+      "command": ["python", "E:/work/LLM/AnythingLLMMCP/server.py"],
+      "enabled": true
+    }
+  }
+}
