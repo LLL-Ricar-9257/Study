@@ -3,7 +3,8 @@
   "mcp": {
     "anythingllm": {
       "type": "local",
-      "command": ["python", "E:/work/LLM/AnythingLLMMCP/server.py"],
+      "cwd": "AnythingLLMMCP",
+      "command": ["python", "server.py"],
       "enabled": true
     }
   }
