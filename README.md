@@ -8,7 +8,7 @@
 | [Pet-hospital-MCP](#1-pet-hospital-mcp) | Go 1.22 / Python 3.11+ | 宠物医院系统 + MCP 工具服务（**第一个开发任务**） |
 | [AnythingLLMMCP](#2-anythingllmmcp) | Python / MCP SDK | 查询 AnythingLLM 工作区文件元数据 |
 | [AnythingLLMSever](#3-anythingllmsever) | 原生 HTML / JavaScript | 浏览器端 AnythingLLM 批量文档上传器 |
-| [Agent](#4-agent) | Python / OpenAI SDK | 多轮对话 CLI，支持流式输出 |
+| [Agent](#4-agent) | Python / OpenAI SDK | 多轮对话 CLI，支持流式输出与工具调用 |
 
 ---
 
@@ -19,8 +19,12 @@ Study/
 ├── .gitignore
 ├── README.md
 ├── Agent/                          # 任务 4：对话 Agent
-│   └── practice01/
-│       ├── chat.py                 # 多轮对话 + 流式输出
+│   ├── practice01/
+│   │   ├── chat.py                 # 多轮对话 + 流式输出
+│   │   └── config.ini              # 本地配置（已 gitignore，不提交）
+│   └── practice02/
+│       ├── chat.py                 # 流式输出 + getdate 工具调用
+│       ├── chat_isleapyear.py      # 在 chat.py 基础上新增 isleapyear 工具
 │       └── config.ini              # 本地配置（已 gitignore，不提交）
 ├── AnythingLLMMCP/                 # 任务 2：AnythingLLM MCP 服务
 │   ├── server.py                   # MCP 服务器
@@ -202,7 +206,7 @@ python server.py
 
 ## 4. Agent
 
-基于 OpenAI SDK 的多轮对话命令行程序，支持 **SSE 流式输出**与上下文记忆。
+基于 OpenAI SDK 的多轮对话命令行程序，支持 **SSE 流式输出**、上下文记忆与 **function call 工具调用**。
 
 **准备配置** `Agent/practice01/config.ini`（该文件已被 `.gitignore` 排除，不会提交）：
 
@@ -222,6 +226,26 @@ python chat.py
 ```
 
 输入空行会被忽略；每轮回答结束后自动追加到 `messages`，实现多轮对话。
+
+### 4.1 practice02：工具调用
+
+在 `practice01` 的基础上加入 function call，工具调用与最终回答均为流式输出。
+
+| 文件 | 工具 | 实现方式 |
+| --- | --- | --- |
+| `practice02/chat.py` | `getdate` | 调用本地 `date` 命令获取当前日期时间 |
+| `practice02/chat_isleapyear.py` | `getdate` + `isleapyear` | `isleapyear` 用 Python 计算闰年（能被 4 整除且不能被 100 整除，或能被 400 整除） |
+
+`practice02` 复用 `practice01` 的 `config.ini` 格式，复制一份到 `practice02/` 下即可运行：
+
+```bash
+cd Agent/practice02
+python chat.py                 # 支持 getdate
+python chat_isleapyear.py      # 支持 getdate 与 isleapyear
+```
+
+> 流式响应中的 `tool_calls` 分片会按 `index` 聚合 `id` / `name` / `arguments`，聚合完成后执行工具，
+> 再把 `role="tool"` 的结果回传给模型继续生成。
 
 ---
 
