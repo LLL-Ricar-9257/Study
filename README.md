@@ -25,6 +25,7 @@ Study/
 │   └── practice02/
 │       ├── chat.py                 # 流式输出 + getdate 工具调用
 │       ├── chat_isleapyear.py      # 在 chat.py 基础上新增 isleapyear 工具
+│       ├── chat_file_tools.py      # 10 个文件 / 目录操作工具
 │       └── config.ini              # 本地配置（已 gitignore，不提交）
 ├── AnythingLLMMCP/                 # 任务 2：AnythingLLM MCP 服务
 │   ├── server.py                   # MCP 服务器
@@ -41,6 +42,7 @@ Study/
     │   │   └── api/                # REST 路由 + 内嵌网页
     │   ├── Makefile / build.sh
     │   └── LICENSE
+    ├── docs/diagrams/              # 架构图（.mmd 源文件 + 导出的 PNG）
     └── pet_hospital_mcp/           # 下划线 → Python MCP 服务（本层适配器）
         ├── src/pet_hospital_mcp/
         ├── scripts/verify_client.py
@@ -60,6 +62,11 @@ Study/
 
 由两部分组成：**Go 编写的宠物医院 REST API**，以及把它包装成 AI Agent 可调用工具的 **Python MCP 服务**。
 MCP 层是独立进程，只通过 HTTP 调用后端，**不修改后端一行代码**。
+
+![Pet-hospital-MCP 系统架构](Pet-hospital-MCP/docs/diagrams/01-architecture.png)
+
+> 图 1：浏览器 / API 调用方 / AI Agent 三条入口，以及 Go 进程内部分层与存储读写路径。
+> 源文件与更新方式见 [`docs/diagrams`](Pet-hospital-MCP/docs/diagrams/README.md)。
 
 ### 1.1 Go REST API（后端）
 
@@ -103,6 +110,11 @@ curl -s http://127.0.0.1:8080/health
 | MCP 端点 | `POST http://127.0.0.1:8765/mcp` |
 | 健康检查 | `GET http://127.0.0.1:8765/health` |
 | 已实现工具 | `list_pets` |
+
+![list_pets 调用时序图](Pet-hospital-MCP/docs/diagrams/02-list-pets-sequence.png)
+
+> 图 2：一次 `list_pets` 调用从 MCP 客户端到 Go API 的完整链路（无状态 HTTP + 统一响应信封）。
+> 注意启动时已把 `pet.db` 回放到内存，列表查询不再读盘。
 
 **「无状态」的含义：** 不发送 `initialize`，不返回也不接受 `Mcp-Session-Id`，没有会话存储与 SSE 断点续传；每次 POST 都是自包含的请求—响应，服务重启不丢任何东西。
 
@@ -235,6 +247,7 @@ python chat.py
 | --- | --- | --- |
 | `practice02/chat.py` | `getdate` | 调用本地 `date` 命令获取当前日期时间 |
 | `practice02/chat_isleapyear.py` | `getdate` + `isleapyear` | `isleapyear` 用 Python 计算闰年（能被 4 整除且不能被 100 整除，或能被 400 整除） |
+| `practice02/chat_file_tools.py` | 10 个文件 / 目录操作工具 | 纯 Python 标准库实现，路径限制在工作区内 |
 
 `practice02` 复用 `practice01` 的 `config.ini` 格式，复制一份到 `practice02/` 下即可运行：
 
@@ -246,6 +259,40 @@ python chat_isleapyear.py      # 支持 getdate 与 isleapyear
 
 > 流式响应中的 `tool_calls` 分片会按 `index` 聚合 `id` / `name` / `arguments`，聚合完成后执行工具，
 > 再把 `role="tool"` 的结果回传给模型继续生成。
+
+### 4.2 practice02：本地文件管理工具集
+
+`chat_file_tools.py` 沿用 `chat_isleapyear.py` 的流式对话与 function call 结构，把工具扩展到 **10 个文件 / 目录操作**，
+让模型通过对话完成浏览目录、读取文本、增删改文件等任务。
+
+| 序号 | 工具 | 说明 |
+| --- | --- | --- |
+| 1 | `get_current_directory` | 获取启动时的工作目录 |
+| 2 | `list_directory` | 列出目录内容，支持递归、文件大小与修改时间 |
+| 3 | `get_file_type` | 扩展名、MIME、文本 / 二进制判断、编码、大小 |
+| 4 | `read_text_file` | 读取纯文本，自动识别 UTF-8 / GB18030 / UTF-16，超长内容截断 |
+| 5 | `create_file` | 按「目录 + 文件名」创建文件，可写入初始内容，默认不覆盖 |
+| 6 | `edit_text_file` | 支持覆盖、追加、文本替换三种模式 |
+| 7 | `create_directory` | 创建目录，默认递归创建父目录 |
+| 8 | `delete_directory` | 递归删除目录，支持非空目录 |
+| 9 | `delete_file` | 删除文件 |
+| 10 | `rename_path` | 重命名文件或目录，兼容 Windows 仅大小写改名 |
+
+**实现要点：**
+
+- 只用 Python 标准库，不依赖 shell 命令，跨平台一致。
+- 所有相对路径基于启动时的工作目录，并限制在该工作区内，阻止 `..` 与符号链接越界。
+- 读取 / 编辑只接受纯文本，二进制文件会被拒绝并提示先用 `get_file_type` 查看类型；单文件读取上限 5 MB。
+- 写入采用「临时文件 + 原子替换」，中途失败不会破坏原文件。
+- 删除或重命名工作区根目录会被拒绝；工具执行失败会作为结果回传给模型，不中断对话。
+
+**运行与自检：**
+
+```bash
+cd Agent/practice02
+python chat_file_tools.py               # 进入对话，工作区就是当前目录
+python chat_file_tools.py --self-test   # 不调用模型，直接验证 10 个工具（13 项检查）
+```
 
 ---
 

@@ -1,0 +1,22 @@
+sequenceDiagram
+  autonumber
+  participant Agent as AI Agent / MCP Client
+  participant MCP as MCP Server :8765
+  participant Client as REST Client
+  participant API as Go API :8080
+  participant Store as Store
+  participant DB as pet.db
+
+  Agent->>MCP: POST /mcp · tools/call "list_pets"
+  MCP->>MCP: 参数校验 + 组装查询
+  MCP->>Client: list_pets(query)
+  Client->>API: GET /api/v1/pets?...
+  API->>Store: List(Query)
+  Store-->>API: Result（内存索引）
+  API-->>Client: 200 · JSON 信封
+  Client->>Client: 拆信封 + Pydantic 校验
+  Client-->>MCP: PetListData
+  MCP-->>Agent: structuredContent
+
+  Note over Store,DB: 启动时已回放 pet.db 到内存；列表查询不再读盘
+  Note over Client,API: 超时 / 5xx / 非法 JSON：有限重试 + 错误归类，最终 isError=true

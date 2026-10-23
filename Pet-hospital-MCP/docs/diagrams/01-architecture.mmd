@@ -1,0 +1,47 @@
+flowchart LR
+  U["医院工作人员<br/>浏览器"]
+  C["API 调用者<br/>curl / 脚本"]
+  A["AI Agent<br/>MCP Client"]
+
+  subgraph GO[Go 单二进制 · pet-hospital-mcp · :8080]
+    HTTP["HTTP Server<br/>net/http ServeMux + 日志中间件<br/>GET / 返回内嵌 Web UI"]
+    H["REST Handlers<br/>CRUD / 查询 / 病历 / 收费<br/>批量 / 导出 / 统计"]
+    M["Model 层<br/>Pet / MedicalRecord / Treatment<br/>Validate + Recalc"]
+    S["Store 引擎<br/>RWMutex + map 内存索引"]
+    G["Compaction<br/>tmp → fsync → rename"]
+  end
+
+  subgraph PY[Python MCP Adapter · pet_hospital_mcp · :8765]
+    MS["MCPServer<br/>无状态 Streamable HTTP /mcp"]
+    T["Tool: list_pets"]
+    RC["REST Client<br/>httpx · timeout · retry"]
+  end
+
+  DB[("data/pet.db<br/>Header + append-only log<br/>CRC32 + fsync")]
+
+  U -->|"GET / + fetch /api/v1/*"| HTTP
+  C -->|"HTTP JSON"| HTTP
+  A -->|"POST /mcp · tools/call"| MS
+  MS --> T --> RC
+  RC -->|"GET /api/v1/pets"| HTTP
+
+  HTTP --> H
+  H --> M
+  H --> S
+  S -->|"读：启动回放 / 查询内存"| DB
+  S -->|"写：追加日志 + fsync"| DB
+  S -.->|"自动压实"| G
+  G -.->|"原子替换"| DB
+
+  classDef client fill:#EAF2FF,stroke:#2F80ED,color:#17365D
+  classDef go fill:#EAF8EF,stroke:#27AE60,color:#14532D
+  classDef py fill:#F4ECFF,stroke:#8E44AD,color:#3B1B5C
+  classDef data fill:#FFF4E0,stroke:#D97706,color:#5C3A00
+
+  class U,C,A client
+  class HTTP,H,M,S,G go
+  class MS,T,RC py
+  class DB data
+
+  style GO fill:#FBFFFC,stroke:#27AE60,stroke-width:2px
+  style PY fill:#FCF8FF,stroke:#8E44AD,stroke-width:2px
