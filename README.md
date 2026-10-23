@@ -9,6 +9,7 @@
 | [AnythingLLMMCP](#2-anythingllmmcp) | Python / MCP SDK | 查询 AnythingLLM 工作区文件元数据 |
 | [AnythingLLMSever](#3-anythingllmsever) | 原生 HTML / JavaScript | 浏览器端 AnythingLLM 批量文档上传器 |
 | [Agent](#4-agent) | Python / OpenAI SDK | 多轮对话 CLI，支持流式输出与工具调用 |
+| [xAgent](#43-xagent) | Python / Textual / OpenAI SDK | Core/TUI 分层、文件工具、中文命令面板 |
 
 ---
 
@@ -22,11 +23,18 @@ Study/
 │   ├── practice01/
 │   │   ├── chat.py                 # 多轮对话 + 流式输出
 │   │   └── config.ini              # 本地配置（已 gitignore，不提交）
-│   └── practice02/
-│       ├── chat.py                 # 流式输出 + getdate 工具调用
-│       ├── chat_isleapyear.py      # 在 chat.py 基础上新增 isleapyear 工具
-│       ├── chat_file_tools.py      # 10 个文件 / 目录操作工具
-│       └── config.ini              # 本地配置（已 gitignore，不提交）
+│   ├── practice02/
+│   │   ├── chat.py                 # 流式输出 + getdate 工具调用
+│   │   ├── chat_isleapyear.py      # 在 chat.py 基础上新增 isleapyear 工具
+│   │   ├── chat_file_tools.py      # 10 个文件 / 目录操作工具
+│   │   └── config.ini              # 本地配置（已 gitignore，不提交）
+│   └── xAgent/                     # Core/TUI 分层重构版
+│       ├── core/                   # 业务核心：Agent、工具、配置、事件流
+│       ├── tui/                    # Textual 终端界面
+│       ├── tests/                  # 26 项核心与 TUI 测试
+│       ├── docs/                   # 架构说明与界面预览
+│       ├── config.example.ini
+│       └── pyproject.toml
 ├── AnythingLLMMCP/                 # 任务 2：AnythingLLM MCP 服务
 │   ├── server.py                   # MCP 服务器
 │   ├── opencode.json               # opencode 的 MCP 注册配置
@@ -294,6 +302,48 @@ python chat_file_tools.py               # 进入对话，工作区就是当前�
 python chat_file_tools.py --self-test   # 不调用模型，直接验证 10 个工具（13 项检查）
 ```
 
+### 4.3 xAgent
+
+`Agent/xAgent` 是 `chat_file_tools.py` 的工程化重构版，把单文件脚本拆成
+**core（业务核心）+ tui（Textual 表现层）** 两个主要目录。
+
+![xAgent TUI](Agent/xAgent/docs/tui-preview.png)
+
+**核心设计：**
+
+- `core` 不依赖 Textual / Rich，不读写终端；Agent 只通过 `AgentEvent` 异步事件流向 UI 输出状态。
+- `tui` 不直接操作文件、不创建 OpenAI 客户端，只消费核心事件。
+- OpenAI、文件系统和 UI 之间通过 `ChatModel`、`ToolRegistry` 与事件契约解耦，便于以后增加 Web / Desktop 界面。
+- 提供 **10 个文件工具 + `get_current_datetime` 时间工具**，所有路径限制在工作区内。
+- 支持多轮工具调用、工具错误回传、取消生成和历史回滚。
+
+**TUI 功能：**
+
+- opencode 风格无边框输入区、马卡龙配色、流式 Markdown 与工具调用卡片。
+- `Ctrl+P` 打开全中文命令面板；`Ctrl+L` 清空；`Esc` 取消当前生成。
+- Windows `cmd.exe` 启动时自动尝试切换黑体，减少中英文和边框错位。
+
+**运行：**
+
+```powershell
+cd Agent/xAgent
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+Copy-Item config.example.ini config.ini
+# 编辑 config.ini，填入 [llm] api_key
+.\.venv\Scripts\xagent.exe --workspace .
+```
+
+**验证：**
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q   # 26 passed
+.\.venv\Scripts\ruff.exe check core tui tests
+```
+
+详细架构与扩展方式见 [`Agent/xAgent/README.md`](Agent/xAgent/README.md)
+和 [`Agent/xAgent/docs/architecture.md`](Agent/xAgent/docs/architecture.md)。
+
 ---
 
 ## 安全约定
@@ -312,7 +362,7 @@ python chat_file_tools.py --self-test   # 不调用模型，直接验证 10 个�
 | Go 后端 | Go 1.22+ |
 | Python MCP 服务 | Python 3.11+ |
 | AnythingLLM MCP | Python 3.10+ |
-| Agent | Python 3.8+ |
+| Agent | Python 3.11+ |
 | Node.js | 可选，仅 MCP Inspector 调试需要 |
 
 ## 安全边界
