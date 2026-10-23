@@ -1,0 +1,226 @@
+Screen {
+    background: #120f18;
+    color: #f6eef8;
+}
+
+Header {
+    background: #1b1524;
+    color: #ffd4b8;
+}
+
+#shell {
+    height: 1fr;
+}
+
+#sidebar {
+    width: 34;
+    min-width: 26;
+    padding: 1 2;
+    background: #17121f;
+}
+
+#main {
+    width: 1fr;
+}
+
+.brand {
+    color: #ffb7c5;
+    text-style: bold;
+}
+
+.tagline {
+    color: #a79ab3;
+    text-style: bold;
+}
+
+#sidebar .side-block {
+    margin: 2 0 0 0;
+    color: #a79ab3;
+    background: #17121f;
+}
+
+#transcript {
+    height: 1fr;
+    padding: 1 2;
+    background: #120f18;
+    scrollbar-size-vertical: 1;
+}
+
+/* 底部 composer：无边框、透明输入区 */
+#composer {
+    height: 3;
+    margin-top: 1;
+    padding: 0 2;
+    background: #1b1524;
+    align-vertical: middle;
+}
+
+#prompt-prefix {
+    width: 2;
+    height: 1;
+    color: #ffb7c5;
+    text-style: bold;
+    content-align: left middle;
+}
+
+#prompt {
+    height: 1;
+    width: 1fr;
+    border: none;
+    padding: 0;
+    background: transparent;
+    color: #f6eef8;
+}
+
+#prompt:focus {
+    background: transparent;
+}
+
+#prompt:disabled {
+    background: transparent;
+    color: #6f657c;
+}
+
+#prompt > .input--cursor,
+Input > .input--cursor {
+    background: #ffb7c5 !important;
+    color: #1b1524 !important;
+}
+
+#prompt > .input--selection {
+    background: #4a3f57;
+    color: #fff7fb;
+}
+
+#prompt > .input--placeholder {
+    color: #776b83;
+}
+
+#composer-footer {
+    height: 1;
+    padding: 0 2;
+    background: #120f18;
+    align-vertical: middle;
+}
+
+#hint {
+    width: 1fr;
+    height: 1;
+    padding-right: 2;
+    color: #776b83;
+    content-align: left middle;
+}
+
+#status {
+    width: auto;
+    height: 1;
+    color: #cdb4db;
+    content-align: right middle;
+}
+
+.message {
+    margin: 1 0;
+    padding: 1 2;
+    width: 100%;
+}
+
+/* 不使用整块背景，避免终端把深蓝映射成亮蓝色块 */
+.user,
+.assistant,
+.tool,
+.tool-error,
+.error,
+.notice {
+    background: transparent;
+}
+
+.assistant {
+    padding: 0 2;
+}
+
+.tool {
+    margin: 1 0;
+    padding: 0 1;
+}
+
+MarkdownTableContent {
+    keyline: none;
+}
+
+/* 命令面板：沿用马卡龙主题，不使用高亮底色块 */
+CommandPalette {
+    background: #0b0710 82%;
+    color: #f6eef8;
+}
+
+CommandPalette > Vertical {
+    background: #17121f;
+}
+
+CommandPalette #--container {
+    background: #17121f;
+}
+
+CommandPalette #--input {
+    border: none;
+    background: transparent;
+}
+
+CommandPalette #--input.--list-visible {
+    border-bottom: none;
+}
+
+CommandPalette SearchIcon {
+    color: #ffb7c5;
+}
+
+CommandPalette CommandInput {
+    background: transparent;
+    color: #f6eef8;
+}
+
+CommandPalette CommandInput > .input--cursor {
+    background: #ffb7c5;
+    color: #17121f;
+}
+
+CommandPalette CommandInput > .input--placeholder {
+    color: #776b83;
+}
+
+CommandPalette CommandList {
+    border: none;
+    background: transparent;
+}
+
+CommandPalette CommandList > .option-list--option {
+    background: transparent;
+    color: #e8dff0;
+}
+
+CommandPalette CommandList > .option-list--option-highlighted,
+CommandPalette CommandList:focus > .option-list--option-highlighted {
+    background: transparent;
+    color: #ffd4b8;
+    text-style: bold;
+}
+
+CommandPalette CommandList > .option-list--option-hover {
+    background: transparent;
+    color: #b8e6d0;
+}
+
+CommandPalette CommandList > .option-list--option-disabled {
+    background: transparent;
+    color: #776b83;
+}
+
+CommandPalette > .command-palette--help-text {
+    color: #a79ab3;
+    text-style: not bold;
+}
+
+CommandPalette > .command-palette--highlight {
+    color: #ffeaa7;
+    text-style: bold underline;
+}
