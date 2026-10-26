@@ -16,7 +16,7 @@
 - **工作区沙箱**：所有路径统一经过 `Workspace.resolve()` 校验，禁止访问工作区之外的文件。
 - **工具调用循环**：自动处理模型的多轮 function calling；工具错误回传给模型，不会中断界面。
 - **流式 TUI**：Markdown 增量渲染、工具调用折叠卡片、状态栏、取消生成、清空会话。
-- **opencode 风格输入区**：无边框 composer、`>` 提示符、马卡龙粉光标，下方显示快捷键与运行状态。
+- **opencode 风格输入区**：无边框 composer、`>` 提示符、马卡龙粉光标，支持 `Ctrl+V` 直接粘贴系统剪贴板。
 - **中文命令面板**：`Ctrl+P` 打开，命令、搜索提示和空结果提示全部为中文。
 - **马卡龙配色**：消息与工具调用不使用整块背景，仅用薄荷绿、奶油黄、粉色和淡紫做文字强调。
 - **终端宽度安全**：不使用 box-drawing 边框；Windows `cmd.exe` 启动时自动切换黑体，
@@ -51,6 +51,7 @@ xAgent/
 │  ├─ app.py                     # 布局、输入、事件消费、生命周期
 │  ├─ widgets.py                 # 消息/工具卡片组件
 │  ├─ formatting.py              # 纯展示格式化 + 宽度安全字符处理
+│  ├─ clipboard.py               # 系统剪贴板读取（Windows / tkinter）
 │  ├─ palette.py                 # 全中文命令面板
 │  ├─ terminal.py                # Windows 控制台字体切换（黑体）
 │  ├─ styles.tcss                # Textual 主题（无 box-drawing 边框）
@@ -140,6 +141,7 @@ max_list_items = 2000
 | `Enter` | 发送当前输入 |
 | `Esc` | 取消正在生成的一轮 |
 | `Ctrl+L` | 清空界面与对话历史 |
+| `Ctrl+V` | 从系统剪贴板粘贴文本；多行会合并为单行；也支持 `Ctrl+Shift+V` / `Shift+Insert` |
 | `Ctrl+P` | 打开中文命令面板 |
 | `Ctrl+Q` | 退出 |
 | `/help` | 显示命令帮助 |
@@ -241,7 +243,7 @@ core.agent ──► core.ports.ChatModel  ◄── core.llm.openai_chat (适�
 .\.venv\Scripts\ruff.exe check core tui tests
 ```
 
-当前：**26 个测试通过**，Ruff 无告警。
+当前：**27 个测试通过**，Ruff 无告警。
 
 ## 从单文件版迁移
 

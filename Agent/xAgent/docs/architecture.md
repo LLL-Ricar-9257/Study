@@ -186,4 +186,4 @@ UI 会展示每个工具的执行结果。
 - `tests/test_agent.py`：工具循环、模型失败回滚、并发拒绝、轮数上限、关闭。
 - `tests/test_config.py`：配置优先级、相对工作区、Key 隐藏、错误配置。
 - `tests/test_architecture.py`：core 不得依赖 Textual/Rich，事件契约公开。
-- `tests/test_tui.py`：Textual 启动、流式回复、取消回滚、字符宽度归一化和无边框样式约束。
+- `tests/test_tui.py`：Textual 启动、流式回复、取消回滚、系统剪贴板粘贴、字符宽度归一化和无边框样式约束。

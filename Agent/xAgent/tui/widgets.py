@@ -3,9 +3,46 @@
 from __future__ import annotations
 
 from rich.text import Text
-from textual.widgets import Collapsible, Markdown, Static
+from textual import events
+from textual.binding import Binding
+from textual.widgets import Collapsible, Input, Markdown, Static
 
+from .clipboard import read_clipboard_text
 from .formatting import pretty_arguments, pretty_output, sanitize_text
+
+
+def _flatten_paste(text: str) -> str:
+    """把多行剪贴板内容压成单行，适配单行 composer。"""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = (line.strip() for line in normalized.split("\n"))
+    return " ".join(line for line in lines if line)
+
+
+class PromptInput(Input):
+    """支持直接读取系统剪贴板的输入框。"""
+
+    BINDINGS = [
+        Binding("ctrl+shift+v", "paste", "粘贴", show=False),
+        Binding("shift+insert", "paste", "粘贴", show=False),
+        *Input.BINDINGS,
+    ]
+
+    def action_paste(self) -> None:
+        text = read_clipboard_text() or self.app.clipboard
+        if text:
+            self._insert_paste(text)
+
+    def _on_paste(self, event: events.Paste) -> None:
+        if event.text:
+            self._insert_paste(event.text)
+        event.stop()
+
+    def _insert_paste(self, text: str) -> None:
+        flattened = _flatten_paste(text)
+        if not flattened:
+            return
+        start, end = self.selection
+        self.replace(flattened, start, end)
 
 
 class UserMessage(Static):

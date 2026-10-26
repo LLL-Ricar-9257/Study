@@ -196,3 +196,25 @@ def test_command_palette_is_fully_chinese(tmp_path: Path) -> None:
 
     asyncio.run(scenario())
 
+
+def test_prompt_pastes_multiline_system_clipboard(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from tui.widgets import PromptInput
+
+    monkeypatch.setattr(
+        "tui.widgets.read_clipboard_text",
+        lambda: "第一行内容\n第二行内容",
+    )
+    app, _agent = _make_app(tmp_path, OneShotModel())
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 40)) as pilot:
+            prompt = app.query_one("#prompt", PromptInput)
+            prompt.focus()
+            await pilot.press("ctrl+v")
+            await pilot.pause()
+            assert prompt.value == "第一行内容 第二行内容"
+
+    asyncio.run(scenario())
+

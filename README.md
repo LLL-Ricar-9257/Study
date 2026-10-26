@@ -31,7 +31,7 @@ Study/
 │   └── xAgent/                     # Core/TUI 分层重构版
 │       ├── core/                   # 业务核心：Agent、工具、配置、事件流
 │       ├── tui/                    # Textual 终端界面
-│       ├── tests/                  # 26 项核心与 TUI 测试
+│       ├── tests/                  # 27 项核心与 TUI 测试
 │       ├── docs/                   # 架构说明与界面预览
 │       ├── config.example.ini
 │       └── pyproject.toml
@@ -320,7 +320,7 @@ python chat_file_tools.py --self-test   # 不调用模型，直接验证 10 个�
 **TUI 功能：**
 
 - opencode 风格无边框输入区、马卡龙配色、流式 Markdown 与工具调用卡片。
-- `Ctrl+P` 打开全中文命令面板；`Ctrl+L` 清空；`Esc` 取消当前生成。
+- `Ctrl+P` 打开全中文命令面板；`Ctrl+V` 直接粘贴系统剪贴板；`Ctrl+L` 清空；`Esc` 取消当前生成。
 - Windows `cmd.exe` 启动时自动尝试切换黑体，减少中英文和边框错位。
 
 **运行：**
@@ -337,7 +337,7 @@ Copy-Item config.example.ini config.ini
 **验证：**
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q   # 26 passed
+.\.venv\Scripts\python.exe -m pytest -q   # 27 passed
 .\.venv\Scripts\ruff.exe check core tui tests
 ```
 

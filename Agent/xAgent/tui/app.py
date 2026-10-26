@@ -39,6 +39,7 @@ from .widgets import (
     AssistantMessage,
     ErrorMessage,
     NoticeMessage,
+    PromptInput,
     ToolActivity,
     UserMessage,
 )
@@ -53,6 +54,7 @@ HELP_TEXT = """命令
 快捷键
   Esc           取消本轮生成
   Ctrl+L        清空对话
+  Ctrl+V        粘贴系统剪贴板文本
   Ctrl+P        打开命令面板
   Ctrl+Q        退出
 
@@ -114,7 +116,7 @@ class FileAgentApp(App[None]):
                     markup=False,
                 )
                 yield Static(
-                    "快捷键\nEsc  取消生成\nCtrl+L  清空\nCtrl+Q  退出",
+                    "快捷键\nEsc  取消生成\nCtrl+V  粘贴\nCtrl+L  清空\nCtrl+P  命令\nCtrl+Q  退出",
                     classes="side-block",
                     markup=False,
                 )
@@ -122,14 +124,14 @@ class FileAgentApp(App[None]):
                 yield VerticalScroll(id="transcript")
                 with Horizontal(id="composer"):
                     yield Static(">", id="prompt-prefix", markup=False)
-                    yield Input(
+                    yield PromptInput(
                         placeholder=" 向 xAgent 描述任务，Enter 发送...",
                         id="prompt",
                         compact=True,
                     )
                 with Horizontal(id="composer-footer"):
                     yield Static(
-                        "Enter 发送   |   Esc 取消   |   Ctrl+L 清空   |   Ctrl+P 命令",
+                        "Enter 发送   |   Esc 取消   |   Ctrl+V 粘贴",
                         id="hint",
                         markup=False,
                     )
