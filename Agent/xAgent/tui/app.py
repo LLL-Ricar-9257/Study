@@ -116,7 +116,7 @@ class FileAgentApp(App[None]):
                     markup=False,
                 )
                 yield Static(
-                    f"内置工具\n{TOOL_COUNT} 项能力\n文件 / 网页 / 搜索 / 日期时间",
+                    f"内置工具\n{TOOL_COUNT} 项能力\n文件 / 网页 / 搜索 / 命令行 / 日期时间",
                     classes="side-block",
                     markup=False,
                 )
@@ -298,15 +298,13 @@ class FileAgentApp(App[None]):
         command, _, _argument = text.partition(" ")
         command = command.lower()
         if command == "/help":
-            await self._append(NoticeMessage(HELP_TEXT))
+            await self._command_help()
         elif command == "/clear":
             await self.action_clear_chat()
         elif command in {"/quit", "/exit"}:
             self.exit()
         elif command == "/workspace":
-            await self._append(
-                NoticeMessage(f"当前工作区：{self.config.workspace}")
-            )
+            await self._command_workspace()
         elif command == "/cancel":
             self.action_cancel_turn()
         else:

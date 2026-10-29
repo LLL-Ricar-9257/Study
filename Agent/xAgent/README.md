@@ -11,9 +11,10 @@
 - **Core / UI 分离**：`core` 不依赖 Textual、Rich，也不读写终端；`tui` 不直接操作文件或调用模型。
 - **事件流驱动**：核心通过 `AgentEvent` 异步流输出文本、工具调用、完成和错误状态；
   Textual、WebSocket、桌面端可以消费同一套事件。
-- **10 个文件工具 + 系统时间工具 + 网页抓取 + 网络搜索**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
+- **10 个文件工具 + 系统时间工具 + 网页抓取 + 网络搜索 + 本地命令行**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
   获取当前日期、时间、时区和星期，用 `fetchWeb` 抓取网页正文并转换为 Markdown，
-  以及用 `searchweb` 调用百度千帆 AI 搜索获取互联网实时信息。
+  用 `searchweb` 调用百度千帆 AI 搜索获取互联网实时信息，以及用 `Runcil`
+  运行本机已安装的任意 CLI 程序并返回 stdout / stderr / 退出码。
 - **工作区沙箱**：所有路径统一经过 `Workspace.resolve()` 校验，禁止访问工作区之外的文件。
 - **工具调用循环**：自动处理模型的多轮 function calling；工具错误回传给模型，不会中断界面。
 - **流式 TUI**：Markdown 增量渲染、工具调用折叠卡片、状态栏、取消生成、清空会话。
@@ -47,9 +48,10 @@ xAgent/
 │     ├─ filesystem.py           # 10 个文件工具 + 时间工具的实现
 │     ├─ web.py                  # curl 抓取 + trafilatura 正文提取（fetchWeb）
 │     ├─ search.py               # 百度千帆 AI 搜索（searchweb）
+│     ├─ runcli.py               # 本地命令行执行（Runcil）
 │     ├─ paths.py                # 工作区路径策略与名称校验
 │     ├─ registry.py             # 工具注册、JSON 参数校验、异常隔离
-│     ├─ specs.py                # 工具 JSON Schema 声明（文件 / 网页 / 搜索）
+│     ├─ specs.py                # 工具 JSON Schema 声明（文件 / 网页 / 搜索 / 命令行）
 │     └─ types.py                # ToolSpec / ToolResult
 ├─ tui/                          # Textual 表现层
 │  ├─ app.py                     # 布局、输入、事件消费、生命周期
@@ -200,6 +202,33 @@ API 返回业务错误、响应不是合法 JSON、返回结果为空时，工�
 Function Calling 的结果向模型返回可读的错误信息，由模型转告用户，
 不会中断会话，也不会把 API Key 写入日志或 UI。
 
+## 本地命令行（Runcil）
+
+模型需要运行本机已经安装的 CLI（如 `git`、`python`、`ffmpeg`）时，会调用 `Runcil`：
+
+```json
+{"command": "git", "args": ["status", "--short"]}
+```
+
+执行流程：
+
+1. `command` 与 `args` 被组装为参数列表，通过
+   `subprocess.run([...], shell=False)` 执行，不会把程序名或参数拼成 shell 命令字符串；
+2. 命令以运行 xAgent 的当前用户权限、在 Agent 当前工作区下执行；标准输入被置空，
+   因此需要交互输入的程序会直接读到 EOF 或等待到超时；
+3. 工具返回命令、退出码、执行状态、标准输出和标准错误。退出码非 0 时，
+   模型会结合 stderr 判断失败原因并决定下一步；
+4. 默认执行超时 **30 秒**，超时会终止进程并回传超时前已捕获的输出；
+5. stdout 和 stderr 各自超过 **10000 字符**时只保留前 10000 字符，
+   并明确标注截断及未显示的字符数，避免终端输出占满上下文。
+
+安全说明：本阶段按教学要求**不实现命令白名单、黑名单或审批机制**，任意已安装的
+程序都可能被执行，且命令拥有与 xAgent 相同的用户权限和文件访问能力。该功能仅用于
+受控教学实验环境，不应在不受信任的输入或生产环境中直接启用。
+
+> `dir`、`cd`、`echo` 等由 Shell 内建提供的命令不是独立可执行程序，不能直接运行；
+> 请改用对应的独立程序，或显式调用 `cmd /c ...`、`powershell -Command ...`。
+
 ## TUI 操作
 
 | 操作 | 说明 |
@@ -309,7 +338,7 @@ core.agent ──► core.ports.ChatModel  ◄── core.llm.openai_chat (适�
 .\.venv\Scripts\ruff.exe check core tui tests
 ```
 
-当前：**55 个测试通过**，Ruff 无告警。
+当前：**64 个测试通过**，Ruff 无告警。
 
 ## 从单文件版迁移
 

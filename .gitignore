@@ -36,6 +36,8 @@ obj/
 
 # ============ 缓存与日志 ============
 .cache/
+.pytest_tmp/
+pytest-of-*/
 *.log
 *.pid
 

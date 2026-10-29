@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -32,4 +32,3 @@ class ToolResult:
 
     content: str
     ok: bool = True
-    meta: dict[str, Any] = field(default_factory=dict)

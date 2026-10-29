@@ -1,4 +1,4 @@
-"""文件工具、系统时间工具、网页抓取工具与网络搜索工具的 JSON Schema 声明。
+"""文件工具、系统时间工具、网页抓取、网络搜索与本地命令行工具的 JSON Schema 声明。
 
 声明与实现分离：新增/调整工具描述不会影响文件操作实现。
 """
@@ -276,4 +276,44 @@ SEARCH_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ),
 )
 
-ALL_TOOL_SPECS = FILE_TOOL_SPECS + WEB_TOOL_SPECS + SEARCH_TOOL_SPECS
+RUNCLI_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name="Runcil",
+        description=(
+            "在本机执行已经安装的命令行程序（CLI），返回标准输出、标准错误和退出码。"
+            "command 只填程序名称或完整路径，args 按顺序逐项填写参数；"
+            "程序名与参数不会被拼成 shell 命令，因此不需要额外引号或转义，"
+            "也不能用它执行 cd、dir、echo 等 Shell 内建命令。"
+            "命令在 xAgent 的当前工作目录下、以运行 xAgent 的当前用户权限执行，"
+            "无法接收交互输入，默认最长运行 30 秒。"
+            "请根据退出码是否为 0 以及输出内容判断执行结果，再决定下一步操作。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": (
+                        "要执行的程序名称（需位于 PATH 中）或可执行文件的完整路径，"
+                        "例如 python、git、ffmpeg"
+                    ),
+                },
+                "args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "按顺序传给程序的参数列表，每个参数单独一项；"
+                        "没有参数时省略或传 []。不要在这里放入程序名。"
+                    ),
+                    "default": [],
+                },
+            },
+            "required": ["command"],
+            "additionalProperties": False,
+        },
+    ),
+)
+
+ALL_TOOL_SPECS = (
+    FILE_TOOL_SPECS + WEB_TOOL_SPECS + SEARCH_TOOL_SPECS + RUNCLI_TOOL_SPECS
+)

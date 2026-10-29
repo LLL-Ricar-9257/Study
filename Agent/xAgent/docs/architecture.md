@@ -38,6 +38,8 @@
 │                              │  │ curl + trafilatura      │
 │                              │  │ tools/search.py         │
 │                              │  │ 百度千帆 AI 搜索         │
+│                              │  │ tools/runcli.py         │
+│                              │  │ 本地命令行执行            │
 └──────────────────────────────┘  └────────────────────────┘
 ```
 
@@ -91,8 +93,13 @@
 - `search.SearchToolset`：`searchweb` 的实现。从 `SearchSettings` 读取百度千帆 API Key，
   用标准库 `urllib` 请求 `v2/ai_search/web_search`，把摘要、标题、URL 和发布时间整理后返回。
   缺少 Key、网络失败、HTTP/API 错误和响应格式异常都转换为 `ToolError`。
-- `specs.FILE_TOOL_SPECS` / `specs.WEB_TOOL_SPECS` / `specs.SEARCH_TOOL_SPECS`：
-  工具 JSON Schema，与实现解耦；`ALL_TOOL_SPECS` 是注册时使用的完整声明。
+- `runcli.RunCliToolset`：`Runcil` 的实现。把 `command` 与 `args` 组装为参数列表，
+  通过 `subprocess.run(..., shell=False)` 在 Agent 工作区执行，返回 stdout、stderr
+  和退出码；固定超时 30 秒，输出超过上限时截断并标注。本阶段不实现命令白名单、
+  黑名单或审批，仅用于受控教学环境。
+- `specs.FILE_TOOL_SPECS` / `specs.WEB_TOOL_SPECS` / `specs.SEARCH_TOOL_SPECS` /
+  `specs.RUNCLI_TOOL_SPECS`：工具 JSON Schema，与实现解耦；
+  `ALL_TOOL_SPECS` 是注册时使用的完整声明。
 - `registry.ToolRegistry`：校验 JSON 参数、绑定签名、隔离异常。
   工具失败被转换为 `ToolResult(ok=False)`，作为 tool 消息回传给模型，
   不会把异常抛到 UI。
@@ -193,6 +200,9 @@ await websocket.send_json(payload)
   下载失败、超时、非 HTML、解析失败和正文为空都转换为可读的 `ToolError`。
 - **网络搜索**：API Key 只从配置或环境变量读取；缺少配置、鉴权失败、网络异常、
   API 业务错误和响应格式异常都返回可读的 `ToolError`，不会中断会话。
+- **本地命令行**：程序名与参数始终组成参数列表并设置 `shell=False`；标准输入置空，
+  默认 30 秒超时，stdout/stderr 超长时截断并标注。本阶段没有白名单、黑名单或审批，
+  命令以当前用户权限执行，仅适用于受控教学环境。
 - **路径安全**：所有相对路径基于工作区；解析后必须仍位于工作区内；
   根目录不可删除或重命名。
 
@@ -204,6 +214,7 @@ UI 会展示每个工具的执行结果。
 - `tests/test_filesystem_tools.py`：文件工具与时间工具、路径越界、覆盖保护、注册表错误。
 - `tests/test_web_tool.py`：网页抓取、Markdown 转换、URL 校验、超时/失败/解析异常、截断和注册。
 - `tests/test_search_tool.py`：搜索请求构造、摘要/标题/URL 输出、缺少 Key、HTTP/API/网络/解析错误、截断和注册。
+- `tests/test_runcli_tool.py`：参数列表执行、`shell=False`、非零退出码、超时、输出截断、缺少程序、参数校验、注册与真实子进程。
 - `tests/test_agent.py`：工具循环、模型失败回滚、并发拒绝、轮数上限、关闭。
 - `tests/test_config.py`：配置优先级、相对工作区、Key 隐藏、错误配置。
 - `tests/test_architecture.py`：core 不得依赖 Textual/Rich，事件契约公开。

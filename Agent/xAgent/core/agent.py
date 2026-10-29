@@ -66,10 +66,6 @@ class FileAgent:
         """当前对话快照（含 system 消息），供 UI 恢复/调试使用。"""
         return tuple(self._messages)
 
-    @property
-    def is_busy(self) -> bool:
-        return self._lock.locked()
-
     def clear(self) -> None:
         """清空对话历史，保留 system 提示。忙碌时拒绝操作。"""
         if self._lock.locked():

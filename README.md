@@ -31,7 +31,7 @@ Study/
 │   └── xAgent/                     # Core/TUI 分层重构版
 │       ├── core/                   # 业务核心：Agent、工具、配置、事件流
 │       ├── tui/                    # Textual 终端界面
-│       ├── tests/                  # 55 项核心与 TUI 测试
+│       ├── tests/                  # 64 项核心与 TUI 测试
 │       ├── docs/                   # 架构说明与界面预览
 │       ├── config.example.ini
 │       └── pyproject.toml
@@ -314,7 +314,7 @@ python chat_file_tools.py --self-test   # 不调用模型，直接验证 10 个�
 - `core` 不依赖 Textual / Rich，不读写终端；Agent 只通过 `AgentEvent` 异步事件流向 UI 输出状态。
 - `tui` 不直接操作文件、不创建 OpenAI 客户端，只消费核心事件。
 - OpenAI、文件系统和 UI 之间通过 `ChatModel`、`ToolRegistry` 与事件契约解耦，便于以后增加 Web / Desktop 界面。
-- 提供 **10 个文件工具 + 时间工具 + `fetchWeb` 网页抓取 + `searchweb` 网络搜索**，所有路径限制在工作区内。
+- 提供 **10 个文件工具 + 时间工具 + `fetchWeb` 网页抓取 + `searchweb` 网络搜索 + `Runcil` 本地命令行**，文件路径限制在工作区内。
 - 支持多轮工具调用、工具错误回传、取消生成和历史回滚。
 
 **TUI 功能：**
@@ -338,7 +338,7 @@ Copy-Item config.example.ini config.ini
 **验证：**
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q   # 55 passed
+.\.venv\Scripts\python.exe -m pytest -q   # 64 passed
 .\.venv\Scripts\ruff.exe check core tui tests
 ```
 
