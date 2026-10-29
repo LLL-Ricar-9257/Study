@@ -218,3 +218,33 @@ def test_prompt_pastes_multiline_system_clipboard(
 
     asyncio.run(scenario())
 
+
+def test_transcript_reflows_after_blur_and_resize(tmp_path: Path) -> None:
+    from textual import events
+    from textual.containers import VerticalScroll
+
+    from tui.widgets import UserMessage
+
+    app, _agent = _make_app(tmp_path, OneShotModel())
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 40)) as pilot:
+            for index in range(20):
+                await app._append(UserMessage(f"消息 {index}"))
+            await pilot.pause()
+
+            transcript = app.query_one("#transcript", VerticalScroll)
+            assert transcript.is_vertical_scroll_end
+
+            app.post_message(events.AppBlur())
+            await pilot.pause()
+            await pilot.resize_terminal(80, 24)
+            await pilot.pause()
+            app.post_message(events.AppFocus())
+            await pilot.pause(0.2)
+
+            assert app.screen.size == (80, 24)
+            assert transcript.is_vertical_scroll_end
+
+    asyncio.run(scenario())
+

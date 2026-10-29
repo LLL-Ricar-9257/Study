@@ -11,11 +11,13 @@
 - **Core / UI 分离**：`core` 不依赖 Textual、Rich，也不读写终端；`tui` 不直接操作文件或调用模型。
 - **事件流驱动**：核心通过 `AgentEvent` 异步流输出文本、工具调用、完成和错误状态；
   Textual、WebSocket、桌面端可以消费同一套事件。
-- **10 个文件工具 + 系统时间工具**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
-  以及获取当前日期、时间、时区和星期。
+- **10 个文件工具 + 系统时间工具 + 网页抓取 + 网络搜索**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
+  获取当前日期、时间、时区和星期，用 `fetchWeb` 抓取网页正文并转换为 Markdown，
+  以及用 `searchweb` 调用百度千帆 AI 搜索获取互联网实时信息。
 - **工作区沙箱**：所有路径统一经过 `Workspace.resolve()` 校验，禁止访问工作区之外的文件。
 - **工具调用循环**：自动处理模型的多轮 function calling；工具错误回传给模型，不会中断界面。
 - **流式 TUI**：Markdown 增量渲染、工具调用折叠卡片、状态栏、取消生成、清空会话。
+- **焦点恢复重排**：窗口失焦或后台生成后重新激活时，强制重新布局会话并回到底部。
 - **opencode 风格输入区**：无边框 composer、`>` 提示符、马卡龙粉光标，支持 `Ctrl+V` 直接粘贴系统剪贴板。
 - **中文命令面板**：`Ctrl+P` 打开，命令、搜索提示和空结果提示全部为中文。
 - **马卡龙配色**：消息与工具调用不使用整块背景，仅用薄荷绿、奶油黄、粉色和淡紫做文字强调。
@@ -43,9 +45,11 @@ xAgent/
 │  │  └─ openai_chat.py          # OpenAI 兼容流式适配器
 │  └─ tools/
 │     ├─ filesystem.py           # 10 个文件工具 + 时间工具的实现
+│     ├─ web.py                  # curl 抓取 + trafilatura 正文提取（fetchWeb）
+│     ├─ search.py               # 百度千帆 AI 搜索（searchweb）
 │     ├─ paths.py                # 工作区路径策略与名称校验
 │     ├─ registry.py             # 工具注册、JSON 参数校验、异常隔离
-│     ├─ specs.py                # 工具的 JSON Schema 声明
+│     ├─ specs.py                # 工具 JSON Schema 声明（文件 / 网页 / 搜索）
 │     └─ types.py                # ToolSpec / ToolResult
 ├─ tui/                          # Textual 表现层
 │  ├─ app.py                     # 布局、输入、事件消费、生命周期
@@ -69,7 +73,7 @@ xAgent/
 
 ## 快速开始
 
-要求 Python 3.11+。
+要求 Python 3.11+，并确保系统 `PATH` 中有 `curl`（Windows 10+ 自带 `curl.exe`）。
 
 ```powershell
 cd E:\work\LLM\Agent\xAgent
@@ -81,6 +85,7 @@ py -3.11 -m venv .venv
 # 配置 API Key
 Copy-Item config.example.ini config.ini
 # 编辑 config.ini，填入 [llm] api_key
+# 如需联网搜索，再填入 [search] baidu_qianfan_api_key
 ```
 
 启动：
@@ -117,6 +122,14 @@ max_tool_rounds = 20
 max_text_bytes = 5242880
 default_max_chars = 50000
 max_list_items = 2000
+
+[search]
+# 百度千帆 AI 搜索 API Key；留空时启动不受影响，调用 searchweb 会返回提示
+baidu_qianfan_api_key =
+# 可选，默认即为官方接口
+api_url = https://qianfan.baidubce.com/v2/ai_search/web_search
+top_k = 10
+timeout_seconds = 20
 ```
 
 环境变量优先级高于配置文件：
@@ -128,11 +141,64 @@ max_list_items = 2000
 | `XAGENT_MODEL` | 模型名 |
 | `XAGENT_WORKSPACE` | 默认工作区 |
 | `XAGENT_CONFIG` | 配置文件路径 |
+| `XAGENT_BAIDU_QIANFAN_API_KEY` | 百度千帆搜索 API Key（也兼容 `BAIDU_QIANFAN_API_KEY`） |
+| `XAGENT_SEARCH_ENDPOINT` | 自定义搜索接口地址 |
 | `XAGENT_CONSOLE_FONT` | cmd.exe 自动切换的控制台字体，默认 `黑体` |
 | `XAGENT_NO_FONT_SETUP` | 设为 `1` 时禁止自动修改控制台字体 |
 
 优先级：命令行参数 > 环境变量 > `config.ini` > 默认值。API Key 只保存在核心配置对象中，
 `LLMSettings` 的 `repr` 已隐藏该字段。
+
+## 网页抓取（fetchWeb）
+
+模型在需要阅读、总结或分析网页时会调用 `fetchWeb`：
+
+```json
+{"url": "https://example.com/article"}
+```
+
+执行流程：
+
+1. 用参数列表方式启动本地 `curl`（不经过 shell），下载 HTML 源码；
+2. 用 `trafilatura` 提取正文并转换为 Markdown，保留标题、段落、列表、表格和链接；
+3. 返回原始 URL、网页标题和 Markdown 正文。
+
+安全与限额：仅允许 `http/https`，重定向同样限制在 `http/https`；连接超时 10 秒、
+总超时 20 秒、下载上限 10 MB。正文超过 `default_max_chars`（默认 50000 字符）时会截断。
+访问失败、超时、内容类型不是 HTML、HTML 解析失败或正文为空时，工具会返回明确的错误信息，
+由模型转告用户，不会中断会话。
+
+## 网络搜索（searchweb）
+
+当用户询问新闻、天气、价格、赛事等时效性信息，或模型不确定某个最新事实时，
+会调用 `searchweb` 获取互联网信息：
+
+```json
+{"query": "北京今日天气与出行建议"}
+```
+
+执行流程：
+
+1. 从 `config.ini` 的 `[search] baidu_qianfan_api_key`（或环境变量
+   `XAGENT_BAIDU_QIANFAN_API_KEY`）读取 API Key，不使用任何硬编码密钥；
+2. 调用百度千帆 AI 搜索接口
+   `https://qianfan.baidubce.com/v2/ai_search/web_search`，
+   请求网页结果 `top_k` 条（默认 10，范围 1-50）；
+3. 把返回的搜索摘要、来源标题、URL 和发布时间整理成纯文本返回给模型。
+
+配置项：
+
+| 键 | 说明 |
+| --- | --- |
+| `baidu_qianfan_api_key` | 必填，百度千帆 API Key；留空时 Agent 仍可启动 |
+| `api_url` | 可选，搜索接口地址 |
+| `top_k` | 可选，网页结果条数，默认 10 |
+| `timeout_seconds` | 可选，请求超时秒数，默认 20 |
+
+容错行为：未配置 Key、Key 无效、网络不可达、请求超时、HTTP 非 2xx、
+API 返回业务错误、响应不是合法 JSON、返回结果为空时，工具都会通过
+Function Calling 的结果向模型返回可读的错误信息，由模型转告用户，
+不会中断会话，也不会把 API Key 写入日志或 UI。
 
 ## TUI 操作
 
@@ -243,7 +309,7 @@ core.agent ──► core.ports.ChatModel  ◄── core.llm.openai_chat (适�
 .\.venv\Scripts\ruff.exe check core tui tests
 ```
 
-当前：**27 个测试通过**，Ruff 无告警。
+当前：**55 个测试通过**，Ruff 无告警。
 
 ## 从单文件版迁移
 
@@ -251,7 +317,7 @@ core.agent ──► core.ports.ChatModel  ◄── core.llm.openai_chat (适�
 | --- | --- |
 | `WORKSPACE` 全局常量 | `core.tools.paths.Workspace` 实例 |
 | 10 个 `*_tool()` 函数 | `core.tools.filesystem.FileToolset` 方法 |
-| `TOOLS` 声明 | `core.tools.specs.FILE_TOOL_SPECS` |
+| `TOOLS` 声明 | `core.tools.specs.FILE_TOOL_SPECS` / `WEB_TOOL_SPECS` |
 | `TOOL_FUNCTIONS` | `ToolRegistry` |
 | `_load_client()` | `core.config.load_config` + `OpenAIChatModel` |
 | `stream_chat()` / `run_tool_calls()` | `FileAgent.send()` + `AgentEvent` |

@@ -28,6 +28,10 @@ _DEFAULT_MAX_TEXT_BYTES = 5 * 1024 * 1024
 _DEFAULT_MAX_CHARS = 50_000
 _DEFAULT_MAX_LIST_ITEMS = 2_000
 _DEFAULT_TIMEOUT_SECONDS = 120.0
+_DEFAULT_SEARCH_ENDPOINT = "https://qianfan.baidubce.com/v2/ai_search/web_search"
+_DEFAULT_SEARCH_TOP_K = 10
+_MAX_SEARCH_TOP_K = 50
+_DEFAULT_SEARCH_TIMEOUT_SECONDS = 20.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +42,28 @@ class LLMSettings:
     base_url: str = _DEFAULT_BASE_URL
     model: str = _DEFAULT_MODEL
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
+
+
+@dataclass(frozen=True, slots=True)
+class SearchSettings:
+    """百度千帆 AI 搜索配置。
+
+    API Key 允许为空：缺少时应用仍可正常启动，只有调用 ``searchweb``
+    才会返回可读的错误提示，用户补全配置后无需改代码。
+    """
+
+    api_key: str = field(default="", repr=False)
+    endpoint: str = _DEFAULT_SEARCH_ENDPOINT
+    top_k: int = _DEFAULT_SEARCH_TOP_K
+    timeout_seconds: float = _DEFAULT_SEARCH_TIMEOUT_SECONDS
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.top_k <= _MAX_SEARCH_TOP_K:
+            raise ConfigurationError(
+                f"搜索 top_k 必须在 1 到 {_MAX_SEARCH_TOP_K} 之间：{self.top_k}"
+            )
+        if self.timeout_seconds <= 0:
+            raise ConfigurationError("搜索 timeout_seconds 必须大于 0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +91,7 @@ class AppConfig:
     workspace: Path
     llm: LLMSettings
     limits: AgentLimits = field(default_factory=AgentLimits)
+    search: SearchSettings = field(default_factory=SearchSettings)
     config_path: Path | None = None
 
     def __post_init__(self) -> None:
@@ -141,6 +168,18 @@ def _positive_float(value: str, label: str, default: float) -> float:
     return number
 
 
+def _bounded_int(value: str, label: str, default: int, maximum: int) -> int:
+    if not value:
+        return default
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise ConfigurationError(f"{label} 必须是整数：{value}") from exc
+    if not 1 <= number <= maximum:
+        raise ConfigurationError(f"{label} 必须在 1 到 {maximum} 之间：{number}")
+    return number
+
+
 def _resolve_workspace(
     value: str | Path | None,
     *,
@@ -178,6 +217,7 @@ def load_config(
     parser = _read_config(path) if path else None
     llm_section = _section(parser, "llm")
     agent_section = _section(parser, "agent")
+    search_section = _section(parser, "search")
 
     api_key = (
         os.getenv("XAGENT_API_KEY", "").strip()
@@ -236,6 +276,33 @@ def load_config(
         _DEFAULT_TIMEOUT_SECONDS,
     )
 
+    search_api_key = (
+        os.getenv("XAGENT_BAIDU_QIANFAN_API_KEY", "").strip()
+        or os.getenv("BAIDU_QIANFAN_API_KEY", "").strip()
+        or search_section.get("baidu_qianfan_api_key", "")
+        or search_section.get("baidu qianfan_api_key", "")
+        or search_section.get("qianfan_api_key", "")
+        or search_section.get("baidu_api_key", "")
+        or search_section.get("api_key", "")
+    )
+    search_endpoint = (
+        os.getenv("XAGENT_SEARCH_ENDPOINT", "").strip()
+        or search_section.get("api_url", "")
+        or search_section.get("endpoint", "")
+        or _DEFAULT_SEARCH_ENDPOINT
+    )
+    search_top_k = _bounded_int(
+        search_section.get("top_k", ""),
+        "搜索 top_k",
+        _DEFAULT_SEARCH_TOP_K,
+        _MAX_SEARCH_TOP_K,
+    )
+    search_timeout = _positive_float(
+        search_section.get("timeout_seconds", ""),
+        "搜索 timeout_seconds",
+        _DEFAULT_SEARCH_TIMEOUT_SECONDS,
+    )
+
     return AppConfig(
         workspace=resolved_workspace,
         llm=LLMSettings(
@@ -245,5 +312,11 @@ def load_config(
             timeout_seconds=timeout_seconds,
         ),
         limits=limits,
+        search=SearchSettings(
+            api_key=search_api_key,
+            endpoint=search_endpoint,
+            top_k=search_top_k,
+            timeout_seconds=search_timeout,
+        ),
         config_path=path,
     )

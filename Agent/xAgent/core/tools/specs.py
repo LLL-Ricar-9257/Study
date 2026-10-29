@@ -1,4 +1,4 @@
-"""10 个文件工具 + 系统时间工具的 JSON Schema 声明。
+"""文件工具、系统时间工具、网页抓取工具与网络搜索工具的 JSON Schema 声明。
 
 声明与实现分离：新增/调整工具描述不会影响文件操作实现。
 """
@@ -228,3 +228,52 @@ FILE_TOOL_SPECS: tuple[ToolSpec, ...] = (
         },
     ),
 )
+
+WEB_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name="fetchWeb",
+        description=(
+            "获取指定网页的主要内容并转换为 Markdown。"
+            "会自动去除导航栏、广告和页脚，保留标题、段落、列表、表格及链接。"
+            "当用户要求阅读、总结或分析某个网页时使用。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "要获取的网页 URL，必须以 http:// 或 https:// 开头",
+                }
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+    ),
+)
+
+SEARCH_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name="searchweb",
+        description=(
+            "使用百度搜索获取互联网上的实时信息，返回搜索结果摘要、来源标题和 URL。"
+            "当用户询问新闻、天气、价格、赛事、近期事件等时效性信息，"
+            "或你无法确定某个最新事实时使用；需要阅读网页全文时再配合 fetchWeb。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "要搜索的关键词或问题，尽量具体，"
+                        "例如“2026 年诺贝尔物理学奖 获奖者”"
+                    ),
+                }
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    ),
+)
+
+ALL_TOOL_SPECS = FILE_TOOL_SPECS + WEB_TOOL_SPECS + SEARCH_TOOL_SPECS

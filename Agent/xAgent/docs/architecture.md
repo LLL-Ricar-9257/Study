@@ -34,6 +34,10 @@
 │ 适配器                       │  │ 适配器                  │
 │ llm/openai_chat.py           │  │ tools/filesystem.py     │
 │ OpenAI 适配器                 │  │ 文件工具适配器           │
+│                              │  │ tools/web.py            │
+│                              │  │ curl + trafilatura      │
+│                              │  │ tools/search.py         │
+│                              │  │ 百度千帆 AI 搜索         │
 └──────────────────────────────┘  └────────────────────────┘
 ```
 
@@ -82,7 +86,13 @@
 
 - `paths.Workspace`：统一解析并校验路径，越界时抛出 `WorkspaceBoundaryError`。
 - `filesystem.FileToolset`：10 个文件工具 + 系统时间工具的实现，不依赖全局变量，便于测试和多工作区。
-- `specs.FILE_TOOL_SPECS`：工具 JSON Schema，与实现解耦。
+- `web.WebToolset`：`fetchWeb` 的实现。通过参数列表调用系统 `curl`（不使用 shell）下载 HTML，
+  再用 `trafilatura` 提取正文并输出 Markdown；只允许 http/https，并限制超时与下载体积。
+- `search.SearchToolset`：`searchweb` 的实现。从 `SearchSettings` 读取百度千帆 API Key，
+  用标准库 `urllib` 请求 `v2/ai_search/web_search`，把摘要、标题、URL 和发布时间整理后返回。
+  缺少 Key、网络失败、HTTP/API 错误和响应格式异常都转换为 `ToolError`。
+- `specs.FILE_TOOL_SPECS` / `specs.WEB_TOOL_SPECS` / `specs.SEARCH_TOOL_SPECS`：
+  工具 JSON Schema，与实现解耦；`ALL_TOOL_SPECS` 是注册时使用的完整声明。
 - `registry.ToolRegistry`：校验 JSON 参数、绑定签名、隔离异常。
   工具失败被转换为 `ToolResult(ok=False)`，作为 tool 消息回传给模型，
   不会把异常抛到 UI。
@@ -142,14 +152,19 @@ await websocket.send_json(payload)
 `tui/palette.py` 继承 Textual 的 `CommandPalette`，替换搜索提示和无匹配提示；
 `FileAgentApp.get_system_commands()` 不再调用父类，而是只提供中文命令。
 
+窗口失焦和重新激活时，TUI 会重新布局 transcript、强制整屏重绘，并在原先
+处于底部时恢复滚动位置。Windows 传统 conhost 不上报 AppFocus，因此额外
+通过前台窗口轮询兜底；Windows Terminal 仍使用 Textual 的焦点事件。
+
 ## 5. 扩展点
 
-### 新增文件工具
+### 新增工具
 
-1. 在 `core/tools/filesystem.py` 添加方法；
-2. 在 `core/tools/specs.py` 添加 `ToolSpec`；
-3. 在 `FileToolset.registry_handlers()` 注册方法名；
-4. 在 `tests/` 增加对应测试。
+1. 在新的 toolset（如 `core/tools/web.py`）中添加方法；
+2. 在 `core/tools/specs.py` 添加 `ToolSpec`，并加入 `ALL_TOOL_SPECS`；
+3. 在 toolset 的 `registry_handlers()` 注册方法名；
+4. 在 `core/bootstrap.py` 组装新的 toolset；
+5. 在 `tests/` 增加对应测试。
 
 `ToolRegistry` 会在构造时检查声明和实现是否一一对应。
 
@@ -174,6 +189,10 @@ await websocket.send_json(payload)
 - **工具错误**：不终止对话，错误文本回传模型，由模型解释给用户。
 - **工具轮数超限**：停止循环，写入一条明确的 assistant 说明。
 - **文件写入**：使用临时文件 + `os.replace`，避免中途失败破坏原文件。
+- **网页抓取**：只允许 http/https；curl 通过参数列表调用且不使用 shell；
+  下载失败、超时、非 HTML、解析失败和正文为空都转换为可读的 `ToolError`。
+- **网络搜索**：API Key 只从配置或环境变量读取；缺少配置、鉴权失败、网络异常、
+  API 业务错误和响应格式异常都返回可读的 `ToolError`，不会中断会话。
 - **路径安全**：所有相对路径基于工作区；解析后必须仍位于工作区内；
   根目录不可删除或重命名。
 
@@ -183,6 +202,8 @@ UI 会展示每个工具的执行结果。
 ## 7. 测试策略
 
 - `tests/test_filesystem_tools.py`：文件工具与时间工具、路径越界、覆盖保护、注册表错误。
+- `tests/test_web_tool.py`：网页抓取、Markdown 转换、URL 校验、超时/失败/解析异常、截断和注册。
+- `tests/test_search_tool.py`：搜索请求构造、摘要/标题/URL 输出、缺少 Key、HTTP/API/网络/解析错误、截断和注册。
 - `tests/test_agent.py`：工具循环、模型失败回滚、并发拒绝、轮数上限、关闭。
 - `tests/test_config.py`：配置优先级、相对工作区、Key 隐藏、错误配置。
 - `tests/test_architecture.py`：core 不得依赖 Textual/Rich，事件契约公开。

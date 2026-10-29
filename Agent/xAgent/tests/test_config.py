@@ -80,3 +80,72 @@ def test_missing_api_key_is_rejected(
 def test_missing_explicit_config_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="找不到配置文件"):
         _discover_config_path(tmp_path / "nope.ini")
+
+
+def _write_search_config(path: Path, *, search: str) -> Path:
+    path.write_text(
+        "[llm]\n"
+        "api_key = test-key\n"
+        "\n[agent]\n"
+        "workspace = .\n"
+        "\n[search]\n" + search,
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_load_search_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("XAGENT_BAIDU_QIANFAN_API_KEY", "BAIDU_QIANFAN_API_KEY", "XAGENT_SEARCH_ENDPOINT"):
+        monkeypatch.delenv(name, raising=False)
+    config_file = _write_search_config(
+        tmp_path / "config.ini",
+        search=(
+            "baidu_qianfan_api_key = baidu-key\n"
+            "api_url = https://example.invalid/search\n"
+            "top_k = 5\n"
+            "timeout_seconds = 8\n"
+        ),
+    )
+
+    config = load_config(config_file)
+    assert config.search.api_key == "baidu-key"
+    assert config.search.endpoint == "https://example.invalid/search"
+    assert config.search.top_k == 5
+    assert config.search.timeout_seconds == 8
+    assert "baidu-key" not in repr(config.search)
+    assert "baidu-key" not in repr(config)
+
+
+def test_search_env_overrides_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XAGENT_BAIDU_QIANFAN_API_KEY", "env-key")
+    config_file = _write_search_config(
+        tmp_path / "config.ini", search="baidu_qianfan_api_key = file-key\n"
+    )
+    config = load_config(config_file)
+    assert config.search.api_key == "env-key"
+
+
+def test_missing_search_key_does_not_block_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("XAGENT_BAIDU_QIANFAN_API_KEY", raising=False)
+    monkeypatch.delenv("BAIDU_QIANFAN_API_KEY", raising=False)
+    config_file = _write_config(tmp_path / "config.ini", workspace=".")
+    config = load_config(config_file)
+    assert config.search.api_key == ""
+    assert config.search.top_k == 10
+
+
+def test_invalid_search_top_k_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("XAGENT_BAIDU_QIANFAN_API_KEY", raising=False)
+    config_file = _write_search_config(
+        tmp_path / "config.ini", search="top_k = 100\n"
+    )
+    with pytest.raises(ConfigurationError, match="top_k"):
+        load_config(config_file)

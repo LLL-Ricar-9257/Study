@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from .agent import FileAgent
 from .bootstrap import build_agent
-from .config import AgentLimits, AppConfig, LLMSettings, load_config
+from .config import AgentLimits, AppConfig, LLMSettings, SearchSettings, load_config
 from .errors import (
     AgentBusyError,
     ConfigurationError,
@@ -46,6 +46,7 @@ __all__ = [
     "LLMSettings",
     "ModelCallError",
     "TOOL_COUNT",
+    "SearchSettings",
     "TextDelta",
     "ToolCall",
     "ToolCallDelta",

@@ -12,6 +12,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from textual import events
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -35,6 +36,7 @@ from core import (
 
 from .formatting import status_text
 from .palette import ChineseCommandPalette
+from .terminal import console_is_active
 from .widgets import (
     AssistantMessage,
     ErrorMessage,
@@ -89,6 +91,9 @@ class FileAgentApp(App[None]):
         self._tool_cards: dict[str, ToolActivity] = {}
         self._state = "就绪"
         self._agent_closed = False
+        self._follow_transcript_tail = True
+        self._reflow_scheduled = False
+        self._native_focus: bool | None = None
 
     # -- 布局 -------------------------------------------------------------
 
@@ -111,7 +116,7 @@ class FileAgentApp(App[None]):
                     markup=False,
                 )
                 yield Static(
-                    f"内置工具\n{TOOL_COUNT} 项能力\n文件 / 日期时间",
+                    f"内置工具\n{TOOL_COUNT} 项能力\n文件 / 网页 / 搜索 / 日期时间",
                     classes="side-block",
                     markup=False,
                 )
@@ -141,6 +146,10 @@ class FileAgentApp(App[None]):
         self.query_one("#prompt", Input).focus()
         self._set_status("就绪")
         self._refresh_sidebar()
+        self._native_focus = console_is_active()
+        if self._native_focus is not None:
+            # conhost 不上报 AppFocus，轮询窗口前台状态作为兜底。
+            self.set_interval(0.5, self._poll_native_focus)
 
     async def on_unmount(self) -> None:
         if self._agent_closed:
@@ -150,6 +159,52 @@ class FileAgentApp(App[None]):
             self._agent_closed = True
         except Exception:
             # 退出阶段不阻塞 UI，也不向用户抛错。
+            pass
+
+    # -- 窗口焦点 / 尺寸恢复 ----------------------------------------------
+
+    def on_app_blur(self, event: events.AppBlur) -> None:
+        """记住失去焦点前用户是否停留在会话底部。"""
+        try:
+            transcript = self.query_one("#transcript", VerticalScroll)
+            self._follow_transcript_tail = transcript.is_vertical_scroll_end
+        except Exception:
+            self._follow_transcript_tail = True
+
+    def on_app_focus(self, event: events.AppFocus) -> None:
+        """重新获得焦点时强制重排，修复后台期间留下的错位。"""
+        self._schedule_transcript_reflow()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._schedule_transcript_reflow()
+
+    def _poll_native_focus(self) -> None:
+        active = console_is_active()
+        if active is None:
+            return
+        previous = self._native_focus
+        self._native_focus = active
+        if active and previous is False:
+            self._schedule_transcript_reflow()
+
+    def _schedule_transcript_reflow(self) -> None:
+        if self._reflow_scheduled:
+            return
+        self._reflow_scheduled = True
+        self.call_after_refresh(self._reflow_transcript)
+
+    def _reflow_transcript(self) -> None:
+        self._reflow_scheduled = False
+        try:
+            self.screen.refresh(repaint=True, layout=True)
+            transcript = self.query_one("#transcript", VerticalScroll)
+            for child in transcript.children:
+                child.refresh(layout=True)
+            transcript.refresh(layout=True)
+            if self._follow_transcript_tail:
+                self._scroll_end()
+        except Exception:
+            # 面板切换期间组件可能暂时不可用；下一帧会再次尝试。
             pass
 
     # -- 命令面板 ---------------------------------------------------------

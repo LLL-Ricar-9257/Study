@@ -18,6 +18,29 @@ DEFAULT_CONSOLE_FONT = "黑体"
 _FALLBACK_FONTS = ("SimHei", "Consolas")
 
 
+def console_is_active() -> bool | None:
+    """判断传统 cmd.exe/conhost 窗口当前是否位于前台。
+
+    Windows Terminal 和普通终端不适用时返回 None。该检测用于弥补
+    conhost 不上报 AppFocus/AppBlur 事件的问题。
+    """
+    if os.name != "nt" or os.getenv("WT_SESSION"):
+        return None
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32.GetConsoleWindow.restype = ctypes.c_void_p
+        user32.GetForegroundWindow.restype = ctypes.c_void_p
+
+        console_window = kernel32.GetConsoleWindow()
+        if not console_window:
+            return None
+        foreground_window = user32.GetForegroundWindow()
+        return int(foreground_window or 0) == int(console_window)
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
 class _Coord(ctypes.Structure):
     _fields_ = [("X", ctypes.c_short), ("Y", ctypes.c_short)]
 
