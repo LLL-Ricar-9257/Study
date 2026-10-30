@@ -123,15 +123,16 @@ def test_system_prompt_is_shown_and_collapsible(tmp_path: Path) -> None:
         async with app.run_test(size=(120, 40)) as pilot:
             card = app.query_one(SystemPromptCard)
             assert card.prompt == agent.system_prompt
-            assert card.collapsed is False
-
-            await app.action_toggle_system_prompt()
-            await pilot.pause()
+            # 启动时默认折叠，用户点击标题或 /system 才展开。
             assert card.collapsed is True
 
             await app.action_toggle_system_prompt()
             await pilot.pause()
             assert card.collapsed is False
+
+            await app.action_toggle_system_prompt()
+            await pilot.pause()
+            assert card.collapsed is True
 
             await app.action_clear_chat()
             await pilot.pause()

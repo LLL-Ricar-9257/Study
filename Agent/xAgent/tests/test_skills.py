@@ -9,7 +9,7 @@ from core import AgentLimits, AppConfig, LLMSettings
 from core.bootstrap import build_agent
 from core.errors import ToolError
 from core.prompts import build_system_prompt
-from core.skills import SkillsCatalog
+from core.skills import SkillsCatalog, bundled_root
 from core.tools.registry import ToolRegistry
 from core.tools.skills import SkillToolset
 from core.tools.specs import SKILL_TOOL_SPECS
@@ -321,4 +321,100 @@ def test_bootstrap_uses_startup_cwd_for_skill_discovery(
 
     agent = build_agent(config)
     assert "cwd-skill" in agent.messages[0].content
+    asyncio.run(agent.aclose())
+
+
+def test_bundled_skills_are_scanned_at_lowest_priority(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    workspace = tmp_path / "workspace"
+    bundled = tmp_path / "bundled"
+    project.mkdir()
+    workspace.mkdir()
+
+    _make_skill(project, "shared", name="shared", description="From project.")
+    _make_skill(workspace, "shared", name="shared", description="From workspace.")
+    _make_skill(bundled, "shared", name="shared", description="From bundled.")
+    _make_skill(bundled, "extra", name="extra-skill", description="From bundled.")
+
+    catalog = SkillsCatalog.discover(
+        project,
+        extra_roots=(workspace,),
+        bundled_roots=(bundled,),
+    )
+
+    assert catalog.get("shared") is not None
+    assert catalog.get("shared").description == "From project."
+    assert [skill.name for skill in catalog.skills] == ["shared", "extra-skill"]
+    assert catalog.searched_roots == (
+        project.resolve(),
+        workspace.resolve(),
+        bundled.resolve(),
+    )
+    # 自带目录里的 Skill 可以正常加载，附件解析也以其自身目录为边界。
+    assert "From bundled." in SkillToolset(catalog).load_skill("extra-skill")
+
+
+def test_duplicate_bundled_root_is_scanned_once(tmp_path: Path) -> None:
+    _make_skill(tmp_path, "demo", name="demo", description="Demo.")
+
+    catalog = SkillsCatalog.discover(tmp_path, bundled_roots=(tmp_path,))
+
+    assert [skill.name for skill in catalog.skills] == ["demo"]
+    assert catalog.issues == ()
+    assert catalog.searched_roots == (tmp_path.resolve(),)
+
+
+def test_bundled_root_points_into_the_source_tree() -> None:
+    root = bundled_root()
+
+    assert root.resolve() == Path(__file__).resolve().parent.parent
+    assert (root / ".agents" / "skills").is_dir()
+    catalog = SkillsCatalog.discover(root, bundled_roots=(root,))
+    # 自带根与启动目录重合时只扫描一次，不会把内置 Skill 当成重复项跳过。
+    assert catalog.searched_roots == (root.resolve(),)
+    assert catalog.issues == ()
+
+
+def test_bootstrap_includes_bundled_skills(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    workspace = tmp_path / "workspace"
+    bundled = tmp_path / "bundled"
+    project.mkdir()
+    workspace.mkdir()
+    _make_skill(bundled, "builtin", name="builtin-skill", description="Bundled.")
+
+    monkeypatch.chdir(project)
+    config = AppConfig(
+        workspace=workspace,
+        llm=LLMSettings(api_key="test-key"),
+        limits=AgentLimits(),
+    )
+
+    agent = build_agent(config, bundled_roots=(bundled,))
+    assert "builtin-skill" in agent.messages[0].content
+    assert "Bundled." in agent.messages[0].content
+    asyncio.run(agent.aclose())
+
+
+def test_bootstrap_can_disable_bundled_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    workspace = tmp_path / "workspace"
+    project.mkdir()
+    workspace.mkdir()
+    _make_skill(project, "demo", name="cwd-skill", description="From cwd.")
+
+    monkeypatch.chdir(project)
+    config = AppConfig(
+        workspace=workspace,
+        llm=LLMSettings(api_key="test-key"),
+        limits=AgentLimits(),
+    )
+
+    agent = build_agent(config, bundled_roots=())
+    assert "cwd-skill" in agent.messages[0].content
+    assert "撰写通知" not in agent.messages[0].content
     asyncio.run(agent.aclose())

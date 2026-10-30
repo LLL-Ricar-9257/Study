@@ -149,7 +149,7 @@ class FileAgentApp(App[None]):
         self.query_one("#prompt", Input).focus()
         self._set_status("就绪")
         self._refresh_sidebar()
-        await self._mount_system_prompt()
+        await self._mount_system_prompt(collapsed=True)
         self._native_focus = console_is_active()
         if self._native_focus is not None:
             # conhost 不上报 AppFocus，轮询窗口前台状态作为兜底。

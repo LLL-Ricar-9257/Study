@@ -89,9 +89,11 @@
 
 ### `core.skills`
 
-`SkillsCatalog` 在启动时扫描项目根目录（`build_agent` 调用时的当前工作目录）下的
-`.agents/skills/*/SKILL.md`，并把 `--workspace` 工作区作为兼容扫描目录；同名 Skill
-以启动目录优先。它只读取到 Frontmatter 结束分隔符为止，解析必需的
+`SkillsCatalog` 在启动时按优先级扫描三个根目录下的 `.agents/skills/*/SKILL.md`：
+启动目录（`build_agent` 调用时的当前工作目录）→ `--workspace` 工作区 →
+xAgent 自带目录（`core` 包上一级的 `.agents/skills`，扫描根由
+`skills.bundled_root()` 给出）；同名 Skill 以先生效者为准，重复的根目录
+只扫描一次。它只读取到 Frontmatter 结束分隔符为止，解析必需的
 `name` / `description`，跳过格式不合法、缺少字段或重名的 Skill，并把原因记录在
 `issues` 中。`SKILL.md` 正文不会在初始化阶段进入上下文。除 Frontmatter 中的
 `name` 外，Skill 目录名也可作为 `loadSkill` 的别名。
@@ -175,8 +177,9 @@ await websocket.send_json(payload)
 `tui/palette.py` 继承 Textual 的 `CommandPalette`，替换搜索提示和无匹配提示；
 `FileAgentApp.get_system_commands()` 不再调用父类，而是只提供中文命令。
 TUI 启动时会把 `FileAgent.system_prompt` 渲染为可折叠的 `SystemPromptCard`，
-让运行时真实发送给模型的系统提示词（含工作区、Skill 清单）对用户可见；
-`/system` 命令和命令面板中的“查看系统提示词”都可展开或收起该卡片。
+默认处于折叠状态，避免长提示词占满会话区；用户点击标题、按 Enter 或执行
+`/system` 即可展开。这样运行时真实发送给模型的系统提示词（含工作区、Skill 清单）
+仍然随时可见；`/system` 命令和命令面板中的“查看系统提示词”都可展开或收起该卡片。
 
 窗口失焦和重新激活时，TUI 会重新布局 transcript、强制整屏重绘，并在原先
 处于底部时恢复滚动位置。Windows 传统 conhost 不上报 AppFocus，因此额外
@@ -198,12 +201,13 @@ TUI 启动时会把 `FileAgent.system_prompt` 渲染为可折叠的 `SystemPromp
 
 Skill 是内容扩展，不需要改代码：
 
-1. 在项目根目录创建 `.agents/skills/<skill-name>/SKILL.md`；
+1. 在启动目录、工作区或 xAgent 仓库根（自带目录）创建
+   `.agents/skills/<skill-name>/SKILL.md`；
 2. Frontmatter 至少包含 `name` 和 `description`；
 3. 需要引用的附件放在同一 Skill 目录内，模型通过
    `loadSkill(name, filename=...)` 按需读取；
-4. 重启 xAgent 后生效。正文只在加载时进入上下文，因此可以按任务组织较长的
-   流程说明和参考文件。
+4. 重启 xAgent 后生效（同名 Skill 按启动目录 > 工作区 > 自带目录取用）。
+   正文只在加载时进入上下文，因此可以按任务组织较长的流程说明和参考文件。
 
 ### 新增模型供应商
 

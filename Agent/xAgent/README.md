@@ -19,8 +19,8 @@
 - **工作区沙箱**：所有路径统一经过 `Workspace.resolve()` 校验，禁止访问工作区之外的文件。
 - **工具调用循环**：自动处理模型的多轮 function calling；工具错误回传给模型，不会中断界面。
 - **流式 TUI**：Markdown 增量渲染、工具调用折叠卡片、状态栏、取消生成、清空会话。
-- **运行时系统提示词**：启动后会在会话区显示本轮实际使用的系统提示词（含工作区与
-  Skill 清单），点击标题或按 Enter 即可折叠/展开；`/system` 可随时切换。
+- **运行时系统提示词**：启动后会在会话区以**折叠**形式放置本轮实际使用的系统提示词
+  （含工作区与 Skill 清单），点击标题或按 Enter 即可展开/收起；`/system` 可随时切换。
 - **焦点恢复重排**：窗口失焦或后台生成后重新激活时，强制重新布局会话并回到底部。
 - **opencode 风格输入区**：无边框 composer、`>` 提示符、马卡龙粉光标，支持 `Ctrl+V` 直接粘贴系统剪贴板。
 - **中文命令面板**：`Ctrl+P` 打开，命令、搜索提示和空结果提示全部为中文。
@@ -236,17 +236,18 @@ Function Calling 的结果向模型返回可读的错误信息，由模型转告
 
 ## Agent Skills（动态加载）
 
-xAgent 支持 [Agent Skills](https://agentskills.io/) 约定。程序初始化时，会以
-**启动 xAgent 时的当前工作目录**作为项目根目录，扫描：
+xAgent 支持 [Agent Skills](https://agentskills.io/) 约定。程序初始化时，会按下面的
+优先级扫描 `<根目录>/.agents/skills/<skill-name>/SKILL.md`：
 
-```text
-<项目根目录>/.agents/skills/<skill-name>/SKILL.md
-```
+1. **启动目录**：启动 xAgent 时的当前工作目录；
+2. **工作区**：`--workspace` 指定的目录，兼容从其他目录启动、但把 Skill 放在
+   工作区里的场景；
+3. **自带目录**：xAgent 源码仓库根下的 `.agents/skills`，随代码一起分发。
 
-这里的项目根目录与 `--workspace` 指定的受控工作区相互独立；它既不是 Python
-安装目录，也不是 xAgent 源码目录。为了兼容从其他目录启动、再用 `--workspace`
-指定工作区的场景，xAgent 也会扫描工作区内的 `.agents/skills`；如果两处出现
-同名 Skill，以启动目录中的版本为准。
+启动目录既不是 Python 安装目录，也不是 xAgent 源码目录，它与 `--workspace`
+受控工作区相互独立。同名 Skill 以优先级高者为准（启动目录 > 工作区 > 自带目录）。
+把 Skill 放在仓库根的 `.agents/skills` 下，无论从哪个目录启动、指定哪个工作区，
+每次对话都能直接调用，不需要复制到每个项目里。
 
 每个 Skill 子目录必须包含 `SKILL.md`，文件开头
 使用 YAML Frontmatter 声明 `name` 和 `description`：

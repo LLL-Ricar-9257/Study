@@ -5,13 +5,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from .agent import FileAgent
 from .config import AppConfig
 from .llm.openai_chat import OpenAIChatModel
 from .prompts import build_system_prompt
-from .skills import SkillsCatalog
+from .skills import SkillsCatalog, bundled_root
 from .tools.filesystem import FileToolset
 from .tools.registry import ToolRegistry
 from .tools.runcli import RunCliToolset
@@ -25,20 +26,29 @@ def build_agent(
     config: AppConfig,
     *,
     project_root: str | Path | None = None,
+    bundled_roots: Iterable[str | Path] | None = None,
 ) -> FileAgent:
     """组装 Agent。
 
     ``project_root`` 默认为程序启动时的当前工作目录，用于发现
-    ``.agents/skills``；它独立于 ``config.workspace``。为兼容从其他目录
-    启动并通过 ``--workspace`` 指定工作区的场景，也会扫描工作区内的
-    ``.agents/skills``；同名 Skill 以启动目录优先。
+    ``.agents/skills``；它独立于 ``config.workspace``。扫描顺序为启动目录 →
+    工作区 → xAgent 自带目录（源码仓库根下的 ``.agents/skills``），同名 Skill
+    以先扫描到的为准。
+
+    ``bundled_roots`` 覆盖自带 Skill 扫描根：默认只扫描 ``bundled_root()``，
+    传空序列可禁用（便于测试构造隔离环境）。
     """
     root = (
         Path.cwd().resolve()
         if project_root is None
         else Path(project_root).expanduser().resolve()
     )
-    skills = SkillsCatalog.discover(root, extra_roots=(config.workspace,))
+    bundled = (bundled_root(),) if bundled_roots is None else tuple(bundled_roots)
+    skills = SkillsCatalog.discover(
+        root,
+        extra_roots=(config.workspace,),
+        bundled_roots=bundled,
+    )
 
     file_tools = FileToolset(config.workspace, limits=config.limits)
     web_tools = WebToolset(limits=config.limits)

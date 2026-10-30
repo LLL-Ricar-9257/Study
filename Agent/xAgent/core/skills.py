@@ -1,8 +1,11 @@
 """Agent Skills 的发现与元数据解析。
 
-Skill 约定：项目根目录（程序启动时的用户工作目录）下的
-``.agents/skills/<skill-name>/SKILL.md``，文件开头是 YAML Frontmatter，
-必须声明 ``name`` 和 ``description``。
+Skill 约定：``<根目录>/.agents/skills/<skill-name>/SKILL.md``，文件开头是
+YAML Frontmatter，必须声明 ``name`` 和 ``description``。
+
+扫描根按优先级排列：启动目录 → ``--workspace`` 工作区 → xAgent 自带目录
+（``<安装目录>/.agents/skills``）。自带目录让 Skill 随源码一起分发，任何
+目录启动、任何工作区都能看到；同名 Skill 以先扫描到的为准。
 
 初始化阶段只解析 Frontmatter，不读取 SKILL.md 正文；完整内容由
 ``loadSkill`` 工具在模型明确需要时动态加载。
@@ -17,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _SKILL_FILENAME = "SKILL.md"
+_SKILLS_RELATIVE_PATH = Path(".agents") / "skills"
 _MAX_FRONTMATTER_LINES = 512
 _MAX_FRONTMATTER_CHARS = 128 * 1024
 _KEY_PATTERN = re.compile(r"^([A-Za-z0-9_.-]+)\s*:\s*(.*)$")
@@ -42,22 +46,25 @@ class SkillsCatalog:
     skills_root: Path
     skills: tuple[SkillInfo, ...] = ()
     issues: tuple[str, ...] = ()
+    searched_roots: tuple[Path, ...] = ()
 
     @classmethod
     def discover(
         cls,
         project_root: str | Path,
         extra_roots: Iterable[str | Path] = (),
+        bundled_roots: Iterable[str | Path] | str | Path = (),
     ) -> SkillsCatalog:
         """扫描 Skill 目录。
 
-        以 ``project_root``（程序启动时的当前工作目录）为主，按顺序扫描
-        ``<root>/.agents/skills``；``extra_roots`` 用于兼容从其他目录启动、
-        但通过 ``--workspace`` 指定工作区的场景。同名 Skill 以先扫描到的为准。
+        按优先级依次扫描 ``<root>/.agents/skills``：``project_root``
+        （程序启动时的当前工作目录）→ ``extra_roots``（通常是 ``--workspace``
+        工作区）→ ``bundled_roots``（xAgent 自带目录）。同名 Skill 以先扫描到的
+        为准，重复的根目录只扫描一次。
         """
-        roots = _resolve_roots(project_root, extra_roots)
+        roots = _resolve_roots(project_root, extra_roots, bundled_roots)
         root = roots[0]
-        skills_root = root / ".agents" / "skills"
+        skills_root = root / _SKILLS_RELATIVE_PATH
 
         issues: list[str] = []
         skills: list[SkillInfo] = []
@@ -71,6 +78,7 @@ class SkillsCatalog:
             skills_root=skills_root,
             skills=tuple(skills),
             issues=tuple(issues),
+            searched_roots=tuple(roots),
         )
 
     def get(self, name: str) -> SkillInfo | None:
@@ -106,15 +114,26 @@ class SkillsCatalog:
         return len(self.skills)
 
 
+def bundled_root() -> Path:
+    """xAgent 自带 Skill 的扫描根：``core`` 包的上一级目录（源码仓库根）。
+
+    扫描根下的 ``.agents/skills`` 就是内置技能目录。这样 Skill 可以随代码一起
+    分发，而不依赖程序的启动目录或 ``--workspace``。
+    """
+    return Path(__file__).resolve().parent.parent
+
+
 def _resolve_roots(
     project_root: str | Path,
-    extra_roots: Iterable[str | Path],
+    extra_roots: Iterable[str | Path] = (),
+    bundled_roots: Iterable[str | Path] | str | Path = (),
 ) -> list[Path]:
     values: list[str | Path] = [project_root]
-    if isinstance(extra_roots, (str, Path)):
-        values.append(extra_roots)
-    else:
-        values.extend(extra_roots)
+    for group in (extra_roots, bundled_roots):
+        if isinstance(group, (str, Path)):
+            values.append(group)
+        else:
+            values.extend(group)
 
     roots: list[Path] = []
     for value in values:
@@ -133,7 +152,7 @@ def _scan_skills_root(
     seen: set[str],
     issues: list[str],
 ) -> None:
-    skills_root = root / ".agents" / "skills"
+    skills_root = root / _SKILLS_RELATIVE_PATH
     if not skills_root.is_dir():
         return
 
