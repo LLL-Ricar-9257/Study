@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
+from .skills import SkillInfo
 
-def build_system_prompt(workspace: Path) -> str:
+
+def build_system_prompt(
+    workspace: Path,
+    skills: Iterable[SkillInfo] | None = None,
+) -> str:
+    skill_section = _build_skill_section(tuple(skills or ()))
     return f"""你是一个本地文件管理助手，当前工作区是：{workspace}
 
 请遵守以下规则：
@@ -28,4 +35,24 @@ def build_system_prompt(workspace: Path) -> str:
     不要拼成一条 shell 命令。根据标准输出、标准错误和退出码判断结果，
     退出码非 0 表示命令失败；不要执行需要交互输入或长时间运行的程序。
 11. 用中文回答，简洁说明执行结果；需要时可以汇总多个工具的结果。
-"""
+{skill_section}"""
+
+
+def _build_skill_section(skills: tuple[SkillInfo, ...]) -> str:
+    if not skills:
+        return ""
+
+    lines = ["", "You have access to the following skills:"]
+    for skill in skills:
+        description = " ".join(skill.description.split())
+        lines.append(f"- '{skill.name}': {description}")
+    lines.extend(
+        (
+            "Use the 'loadSkill' tool to load the full instructions of a skill "
+            "when needed. You can also load additional files referenced by a skill.",
+            "The list above contains only names and descriptions. Call loadSkill "
+            "before following a skill's detailed instructions, and only when the "
+            "current task matches the skill description.",
+        )
+    )
+    return "\n".join(lines) + "\n"

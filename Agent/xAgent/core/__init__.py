@@ -28,8 +28,10 @@ from .events import (
     TurnStarted,
 )
 from .models import ChatChunk, ChatMessage, ToolCall, ToolCallDelta
+from .skills import SkillInfo, SkillsCatalog
 from .tools import TOOL_COUNT
 from .tools.registry import ToolRegistry
+from .tools.skills import SkillToolset
 from .tools.types import ToolResult, ToolSpec
 
 __version__ = "0.1.0"
@@ -47,6 +49,9 @@ __all__ = [
     "ModelCallError",
     "TOOL_COUNT",
     "SearchSettings",
+    "SkillInfo",
+    "SkillToolset",
+    "SkillsCatalog",
     "TextDelta",
     "ToolCall",
     "ToolCallDelta",

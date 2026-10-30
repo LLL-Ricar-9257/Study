@@ -114,6 +114,36 @@ def test_tui_cancel_rolls_back_turn(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_system_prompt_is_shown_and_collapsible(tmp_path: Path) -> None:
+    from tui.widgets import SystemPromptCard
+
+    app, agent = _make_app(tmp_path, OneShotModel())
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 40)) as pilot:
+            card = app.query_one(SystemPromptCard)
+            assert card.prompt == agent.system_prompt
+            assert card.collapsed is False
+
+            await app.action_toggle_system_prompt()
+            await pilot.pause()
+            assert card.collapsed is True
+
+            await app.action_toggle_system_prompt()
+            await pilot.pause()
+            assert card.collapsed is False
+
+            await app.action_clear_chat()
+            await pilot.pause()
+            assert not app.query(SystemPromptCard)
+
+            await app.action_toggle_system_prompt()
+            await pilot.pause()
+            assert app.query_one(SystemPromptCard).collapsed is False
+
+    asyncio.run(scenario())
+
+
 def test_ambiguous_punctuation_is_normalized() -> None:
     assert sanitize_text("“你好”—……") == '"你好"-......'
     assert sanitize_text("文件 · 日期") == "文件 | 日期"

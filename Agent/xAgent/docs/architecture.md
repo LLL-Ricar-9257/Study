@@ -40,6 +40,8 @@
 │                              │  │ 百度千帆 AI 搜索         │
 │                              │  │ tools/runcli.py         │
 │                              │  │ 本地命令行执行            │
+│                              │  │ tools/skills.py         │
+│                              │  │ Skill 按需加载           │
 └──────────────────────────────┘  └────────────────────────┘
 ```
 
@@ -53,6 +55,7 @@
 一个实例代表一个会话，维护：
 
 - `messages`：system / user / assistant / tool 消息历史；
+- `system_prompt`：只读属性，向 UI 暴露当前会话实际使用的系统提示词；
 - `asyncio.Lock`：同一会话串行处理；
 - `max_tool_rounds`：防止模型在工具循环中失控。
 
@@ -84,6 +87,15 @@
 
 事件不包含 OpenAI 原始 chunk、文件句柄或 UI 组件。
 
+### `core.skills`
+
+`SkillsCatalog` 在启动时扫描项目根目录（`build_agent` 调用时的当前工作目录）下的
+`.agents/skills/*/SKILL.md`，并把 `--workspace` 工作区作为兼容扫描目录；同名 Skill
+以启动目录优先。它只读取到 Frontmatter 结束分隔符为止，解析必需的
+`name` / `description`，跳过格式不合法、缺少字段或重名的 Skill，并把原因记录在
+`issues` 中。`SKILL.md` 正文不会在初始化阶段进入上下文。除 Frontmatter 中的
+`name` 外，Skill 目录名也可作为 `loadSkill` 的别名。
+
 ### `core.tools`
 
 - `paths.Workspace`：统一解析并校验路径，越界时抛出 `WorkspaceBoundaryError`。
@@ -97,9 +109,13 @@
   通过 `subprocess.run(..., shell=False)` 在 Agent 工作区执行，返回 stdout、stderr
   和退出码；固定超时 30 秒，输出超过上限时截断并标注。本阶段不实现命令白名单、
   黑名单或审批，仅用于受控教学环境。
+- `skills.SkillToolset`：`loadSkill` 的实现。只传 `name` 时返回 `SKILL.md` 全文；
+  传 `filename` 时按 Skill 相对路径、项目相对路径、绝对路径依次精确匹配，
+  纯文件名则递归搜索该 Skill 目录。所有结果都必须位于该 Skill 目录内部；
+  多个同名文件返回候选路径而不是任意选择。
 - `specs.FILE_TOOL_SPECS` / `specs.WEB_TOOL_SPECS` / `specs.SEARCH_TOOL_SPECS` /
-  `specs.RUNCLI_TOOL_SPECS`：工具 JSON Schema，与实现解耦；
-  `ALL_TOOL_SPECS` 是注册时使用的完整声明。
+  `specs.RUNCLI_TOOL_SPECS` / `specs.SKILL_TOOL_SPECS`：工具 JSON Schema，
+  与实现解耦；`ALL_TOOL_SPECS` 是注册时使用的完整声明。
 - `registry.ToolRegistry`：校验 JSON 参数、绑定签名、隔离异常。
   工具失败被转换为 `ToolResult(ok=False)`，作为 tool 消息回传给模型，
   不会把异常抛到 UI。
@@ -158,6 +174,9 @@ await websocket.send_json(payload)
 
 `tui/palette.py` 继承 Textual 的 `CommandPalette`，替换搜索提示和无匹配提示；
 `FileAgentApp.get_system_commands()` 不再调用父类，而是只提供中文命令。
+TUI 启动时会把 `FileAgent.system_prompt` 渲染为可折叠的 `SystemPromptCard`，
+让运行时真实发送给模型的系统提示词（含工作区、Skill 清单）对用户可见；
+`/system` 命令和命令面板中的“查看系统提示词”都可展开或收起该卡片。
 
 窗口失焦和重新激活时，TUI 会重新布局 transcript、强制整屏重绘，并在原先
 处于底部时恢复滚动位置。Windows 传统 conhost 不上报 AppFocus，因此额外
@@ -174,6 +193,17 @@ await websocket.send_json(payload)
 5. 在 `tests/` 增加对应测试。
 
 `ToolRegistry` 会在构造时检查声明和实现是否一一对应。
+
+### 新增 Skill
+
+Skill 是内容扩展，不需要改代码：
+
+1. 在项目根目录创建 `.agents/skills/<skill-name>/SKILL.md`；
+2. Frontmatter 至少包含 `name` 和 `description`；
+3. 需要引用的附件放在同一 Skill 目录内，模型通过
+   `loadSkill(name, filename=...)` 按需读取；
+4. 重启 xAgent 后生效。正文只在加载时进入上下文，因此可以按任务组织较长的
+   流程说明和参考文件。
 
 ### 新增模型供应商
 
@@ -205,6 +235,9 @@ await websocket.send_json(payload)
   命令以当前用户权限执行，仅适用于受控教学环境。
 - **路径安全**：所有相对路径基于工作区；解析后必须仍位于工作区内；
   根目录不可删除或重命名。
+- **Skill 加载**：初始化只解析 Frontmatter；正文和附件仅在 `loadSkill` 时读取。
+  附件路径解析后必须位于指定 Skill 目录内，`..`、外部绝对路径和符号链接逃逸
+  都会被拒绝；同名附件返回候选路径。
 
 注意：取消只回滚对话历史，不撤销已完成的文件系统副作用。这是文件工具本身的语义，
 UI 会展示每个工具的执行结果。
@@ -215,7 +248,8 @@ UI 会展示每个工具的执行结果。
 - `tests/test_web_tool.py`：网页抓取、Markdown 转换、URL 校验、超时/失败/解析异常、截断和注册。
 - `tests/test_search_tool.py`：搜索请求构造、摘要/标题/URL 输出、缺少 Key、HTTP/API/网络/解析错误、截断和注册。
 - `tests/test_runcli_tool.py`：参数列表执行、`shell=False`、非零退出码、超时、输出截断、缺少程序、参数校验、注册与真实子进程。
+- `tests/test_skills.py`：Skill 发现与 Frontmatter、提示词注入、按需加载、相对/项目/绝对路径、递归唯一匹配、同名候选、越界拒绝与注册。
 - `tests/test_agent.py`：工具循环、模型失败回滚、并发拒绝、轮数上限、关闭。
 - `tests/test_config.py`：配置优先级、相对工作区、Key 隐藏、错误配置。
 - `tests/test_architecture.py`：core 不得依赖 Textual/Rich，事件契约公开。
-- `tests/test_tui.py`：Textual 启动、流式回复、取消回滚、系统剪贴板粘贴、字符宽度归一化和无边框样式约束。
+- `tests/test_tui.py`：Textual 启动、流式回复、取消回滚、系统剪贴板粘贴、字符宽度归一化、系统提示词折叠面板和无边框样式约束。

@@ -15,6 +15,7 @@ from core.tools.specs import (
     FILE_TOOL_SPECS,
     RUNCLI_TOOL_SPECS,
     SEARCH_TOOL_SPECS,
+    SKILL_TOOL_SPECS,
     WEB_TOOL_SPECS,
 )
 
@@ -150,6 +151,7 @@ def test_runcil_is_registered_for_llm(
         + len(WEB_TOOL_SPECS)
         + len(SEARCH_TOOL_SPECS)
         + len(RUNCLI_TOOL_SPECS)
+        + len(SKILL_TOOL_SPECS)
     )
     schema = registry.schema()[0]["function"]["parameters"]
     assert schema["required"] == ["command"]

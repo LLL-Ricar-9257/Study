@@ -16,6 +16,7 @@ from textual import events
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Header, Input, Static
 
@@ -42,6 +43,7 @@ from .widgets import (
     ErrorMessage,
     NoticeMessage,
     PromptInput,
+    SystemPromptCard,
     ToolActivity,
     UserMessage,
 )
@@ -49,6 +51,7 @@ from .widgets import (
 HELP_TEXT = """命令
   /help         显示这段帮助
   /clear        清空界面与对话历史
+  /system       展开或收起系统提示词
   /workspace    查看当前工作区
   /cancel       取消正在生成的一轮
   /quit         退出 xAgent
@@ -116,7 +119,7 @@ class FileAgentApp(App[None]):
                     markup=False,
                 )
                 yield Static(
-                    f"内置工具\n{TOOL_COUNT} 项能力\n文件 / 网页 / 搜索 / 命令行 / 日期时间",
+                    f"内置工具\n{TOOL_COUNT} 项能力\n文件 / 网页 / 搜索 / 命令行 / 技能 / 日期时间",
                     classes="side-block",
                     markup=False,
                 )
@@ -146,6 +149,7 @@ class FileAgentApp(App[None]):
         self.query_one("#prompt", Input).focus()
         self._set_status("就绪")
         self._refresh_sidebar()
+        await self._mount_system_prompt()
         self._native_focus = console_is_active()
         if self._native_focus is not None:
             # conhost 不上报 AppFocus，轮询窗口前台状态作为兜底。
@@ -217,6 +221,11 @@ class FileAgentApp(App[None]):
             self._command_help,
         )
         yield SystemCommand(
+            "查看系统提示词",
+            "展开或收起模型本轮实际使用的系统提示词",
+            self.action_toggle_system_prompt,
+        )
+        yield SystemCommand(
             "清空对话",
             "清空当前会话和界面内容",
             self.action_clear_chat,
@@ -252,6 +261,22 @@ class FileAgentApp(App[None]):
 
     async def _command_workspace(self) -> None:
         await self._append(NoticeMessage(f"当前工作区：{self.config.workspace}"))
+
+    async def _mount_system_prompt(self, *, collapsed: bool = False) -> None:
+        card = SystemPromptCard(self.agent.system_prompt, collapsed=collapsed)
+        transcript = self.query_one("#transcript", VerticalScroll)
+        await transcript.mount(card)
+        transcript.scroll_home(animate=False)
+
+    async def action_toggle_system_prompt(self) -> None:
+        """展开或收起系统提示词；若已被清空则重新显示。"""
+        try:
+            card = self.query_one(SystemPromptCard)
+        except NoMatches:
+            await self._mount_system_prompt(collapsed=False)
+            return
+        card.collapsed = not card.collapsed
+        card.scroll_visible(animate=False)
 
     def _focus_prompt(self) -> None:
         self.query_one("#prompt", Input).focus()
@@ -301,6 +326,8 @@ class FileAgentApp(App[None]):
             await self._command_help()
         elif command == "/clear":
             await self.action_clear_chat()
+        elif command == "/system":
+            await self.action_toggle_system_prompt()
         elif command in {"/quit", "/exit"}:
             self.exit()
         elif command == "/workspace":

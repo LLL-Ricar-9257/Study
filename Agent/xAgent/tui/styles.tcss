@@ -143,6 +143,19 @@ Input > .input--cursor {
     padding: 0 1;
 }
 
+/* 运行时系统提示词：折叠面板，沿用无边框、透明背景的消息风格 */
+.system-prompt {
+    margin: 0 0 1 0;
+    padding: 0 1;
+    background: transparent;
+    border: none;
+}
+
+.system-prompt .system-prompt-body {
+    color: #cdb4db;
+    background: transparent;
+}
+
 MarkdownTableContent {
     keyline: none;
 }

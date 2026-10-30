@@ -1,4 +1,4 @@
-"""文件工具、系统时间工具、网页抓取、网络搜索与本地命令行工具的 JSON Schema 声明。
+"""文件工具、系统时间、网页抓取、网络搜索、本地命令行与 Skill 加载的 JSON Schema 声明。
 
 声明与实现分离：新增/调整工具描述不会影响文件操作实现。
 """
@@ -314,6 +314,42 @@ RUNCLI_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ),
 )
 
+SKILL_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name="loadSkill",
+        description=(
+            "按需加载一个 Agent Skill 的完整说明或附件。"
+            "只提供 name 时返回该 Skill 的 SKILL.md 全文；"
+            "同时提供 filename 时只读取 Skill 目录内的对应附件，不重复加载 SKILL.md。"
+            "filename 支持相对于该 Skill 目录的路径、相对于项目根目录的路径和绝对路径；"
+            "只提供文件名时会递归搜索该 Skill 目录，匹配到多个同名文件时返回候选路径。"
+            "只能在系统提示列出的 Skill 中使用；需要执行某个技能的详细步骤时先调用此工具。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Skill 名称，必须是系统提示中列出的技能之一",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": (
+                        "可选。要加载的附件文件路径或文件名；"
+                        "省略时加载 SKILL.md 全文"
+                    ),
+                },
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    ),
+)
+
 ALL_TOOL_SPECS = (
-    FILE_TOOL_SPECS + WEB_TOOL_SPECS + SEARCH_TOOL_SPECS + RUNCLI_TOOL_SPECS
+    FILE_TOOL_SPECS
+    + WEB_TOOL_SPECS
+    + SEARCH_TOOL_SPECS
+    + RUNCLI_TOOL_SPECS
+    + SKILL_TOOL_SPECS
 )

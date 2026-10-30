@@ -11,13 +11,16 @@
 - **Core / UI 分离**：`core` 不依赖 Textual、Rich，也不读写终端；`tui` 不直接操作文件或调用模型。
 - **事件流驱动**：核心通过 `AgentEvent` 异步流输出文本、工具调用、完成和错误状态；
   Textual、WebSocket、桌面端可以消费同一套事件。
-- **10 个文件工具 + 系统时间工具 + 网页抓取 + 网络搜索 + 本地命令行**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
+- **10 个文件工具 + 系统时间工具 + 网页抓取 + 网络搜索 + 本地命令行 + Skill 加载**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
   获取当前日期、时间、时区和星期，用 `fetchWeb` 抓取网页正文并转换为 Markdown，
-  用 `searchweb` 调用百度千帆 AI 搜索获取互联网实时信息，以及用 `Runcil`
-  运行本机已安装的任意 CLI 程序并返回 stdout / stderr / 退出码。
+  用 `searchweb` 调用百度千帆 AI 搜索获取互联网实时信息，用 `Runcil`
+  运行本机已安装的任意 CLI 程序并返回 stdout / stderr / 退出码，以及用
+  `loadSkill` 按需加载 `.agents/skills` 中的 Agent Skill。
 - **工作区沙箱**：所有路径统一经过 `Workspace.resolve()` 校验，禁止访问工作区之外的文件。
 - **工具调用循环**：自动处理模型的多轮 function calling；工具错误回传给模型，不会中断界面。
 - **流式 TUI**：Markdown 增量渲染、工具调用折叠卡片、状态栏、取消生成、清空会话。
+- **运行时系统提示词**：启动后会在会话区显示本轮实际使用的系统提示词（含工作区与
+  Skill 清单），点击标题或按 Enter 即可折叠/展开；`/system` 可随时切换。
 - **焦点恢复重排**：窗口失焦或后台生成后重新激活时，强制重新布局会话并回到底部。
 - **opencode 风格输入区**：无边框 composer、`>` 提示符、马卡龙粉光标，支持 `Ctrl+V` 直接粘贴系统剪贴板。
 - **中文命令面板**：`Ctrl+P` 打开，命令、搜索提示和空结果提示全部为中文。
@@ -41,7 +44,8 @@ xAgent/
 │  ├─ events.py                  # UI 无关的领域事件（显示协议）
 │  ├─ models.py                  # 供应商无关的消息/分片结构
 │  ├─ ports.py                   # ChatModel 抽象端口
-│  ├─ prompts.py                 # 系统提示词
+│  ├─ prompts.py                 # 系统提示词（含 Skill 列表）
+│  ├─ skills.py                  # Agent Skills 发现与 Frontmatter 解析
 │  ├─ llm/
 │  │  └─ openai_chat.py          # OpenAI 兼容流式适配器
 │  └─ tools/
@@ -49,6 +53,7 @@ xAgent/
 │     ├─ web.py                  # curl 抓取 + trafilatura 正文提取（fetchWeb）
 │     ├─ search.py               # 百度千帆 AI 搜索（searchweb）
 │     ├─ runcli.py               # 本地命令行执行（Runcil）
+│     ├─ skills.py               # 按需加载 Skill（loadSkill）
 │     ├─ paths.py                # 工作区路径策略与名称校验
 │     ├─ registry.py             # 工具注册、JSON 参数校验、异常隔离
 │     ├─ specs.py                # 工具 JSON Schema 声明（文件 / 网页 / 搜索 / 命令行）
@@ -229,6 +234,71 @@ Function Calling 的结果向模型返回可读的错误信息，由模型转告
 > `dir`、`cd`、`echo` 等由 Shell 内建提供的命令不是独立可执行程序，不能直接运行；
 > 请改用对应的独立程序，或显式调用 `cmd /c ...`、`powershell -Command ...`。
 
+## Agent Skills（动态加载）
+
+xAgent 支持 [Agent Skills](https://agentskills.io/) 约定。程序初始化时，会以
+**启动 xAgent 时的当前工作目录**作为项目根目录，扫描：
+
+```text
+<项目根目录>/.agents/skills/<skill-name>/SKILL.md
+```
+
+这里的项目根目录与 `--workspace` 指定的受控工作区相互独立；它既不是 Python
+安装目录，也不是 xAgent 源码目录。为了兼容从其他目录启动、再用 `--workspace`
+指定工作区的场景，xAgent 也会扫描工作区内的 `.agents/skills`；如果两处出现
+同名 Skill，以启动目录中的版本为准。
+
+每个 Skill 子目录必须包含 `SKILL.md`，文件开头
+使用 YAML Frontmatter 声明 `name` 和 `description`：
+
+```markdown
+---
+name: pdf-processing
+description: Extract text and tables from PDF files, fill forms, and merge documents.
+---
+
+# PDF Processing
+
+详细步骤、示例和注意事项写在这里……
+```
+
+初始化阶段只读取 Frontmatter 中的 `name` 和 `description`，**不会把 Skill 正文
+放进上下文**。系统提示词中会加入类似下面的清单：
+
+```text
+You have access to the following skills:
+- 'pdf-processing': Extract text and tables from PDF files, fill forms, and merge documents.
+Use the 'loadSkill' tool to load the full instructions of a skill when needed.
+You can also load additional files referenced by a skill.
+```
+
+模型判断当前任务需要某个 Skill 时，调用 `loadSkill`：
+
+```json
+{"name": "pdf-processing"}
+```
+
+只传 `name` 时返回该 Skill 的 `SKILL.md` 全文；需要读取 Skill 附带的参考文件时，
+再传 `filename`，此时不会重复加载 `SKILL.md`：
+
+```json
+{"name": "pdf-processing", "filename": "references/form-fields.md"}
+```
+
+`filename` 的解析顺序与安全边界：
+
+1. 绝对路径、相对于该 Skill 目录的路径、相对于项目根目录的路径都支持，优先精确匹配；
+2. 只提供文件名（不含路径分隔符）时，递归搜索该 Skill 目录；唯一匹配才读取，
+   存在多个同名文件时返回候选路径，由模型再次指定；
+3. 所有读取结果都必须解析到**该 Skill 目录内部**；`..`、绝对路径或符号链接
+   指向目录之外时会被拒绝，不会借机读取工作区或其他 Skill 的文件；
+4. 不支持二进制文件，单个文件仍受 `max_text_bytes` 限制。
+
+完整内容只在模型调用 `loadSkill` 后进入对话上下文，因此 Skill 可以与
+`Runcil`、`fileOps` 等已有工具协同工作，而不会在每一轮请求中占用上下文。
+格式不合法的 Skill 会被跳过，不影响 xAgent 启动；可通过 `SkillsCatalog.issues`
+查看跳过原因。
+
 ## TUI 操作
 
 | 操作 | 说明 |
@@ -241,6 +311,7 @@ Function Calling 的结果向模型返回可读的错误信息，由模型转告
 | `Ctrl+Q` | 退出 |
 | `/help` | 显示命令帮助 |
 | `/clear` | 清空会话 |
+| `/system` | 展开或收起系统提示词；清空后可用它重新显示 |
 | `/workspace` | 查看当前工作区 |
 | `/cancel` | 取消当前生成 |
 | `/quit` | 退出 |
@@ -267,6 +338,7 @@ Function Calling 的结果向模型返回可读的错误信息，由模型转告
 按 `Ctrl+P` 打开命令面板，输入中文关键词即可筛选。内置命令：
 
 - 显示命令帮助
+- 查看系统提示词
 - 清空对话
 - 取消当前生成
 - 查看当前工作区
@@ -338,7 +410,7 @@ core.agent ──► core.ports.ChatModel  ◄── core.llm.openai_chat (适�
 .\.venv\Scripts\ruff.exe check core tui tests
 ```
 
-当前：**64 个测试通过**，Ruff 无告警。
+当前：**84 个测试通过**，Ruff 无告警。
 
 ## 从单文件版迁移
 

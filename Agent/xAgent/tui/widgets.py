@@ -73,6 +73,35 @@ class AssistantMessage(Markdown):
         self.update(body)
 
 
+class SystemPromptCard(Collapsible):
+    """运行时展示的系统提示词，可点击标题或按 Enter 展开/收起。"""
+
+    def __init__(self, prompt: str, *, collapsed: bool = False) -> None:
+        self._prompt = prompt or ""
+        content = sanitize_text(self._prompt) or "（系统提示词为空）"
+        self._body_widget = Static(
+            Text(content, style="#cdb4db"),
+            markup=False,
+            classes="system-prompt-body",
+        )
+        super().__init__(
+            self._body_widget,
+            title=Text(
+                "系统提示词 | 点击展开/收起",
+                style="bold #a8dadc",
+            ),
+            collapsed=collapsed,
+            collapsed_symbol=">",
+            expanded_symbol="v",
+            classes="system-prompt",
+        )
+
+    @property
+    def prompt(self) -> str:
+        """原始系统提示词（未经展示层字符替换）。"""
+        return self._prompt
+
+
 class ToolActivity(Collapsible):
     """工具调用卡片。"""
 

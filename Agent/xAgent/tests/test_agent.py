@@ -167,6 +167,7 @@ def test_clear_and_close(tmp_path: Path) -> None:
     agent = _agent(tmp_path, model)
 
     async def scenario() -> None:
+        assert agent.system_prompt == "test system"
         async for _ in agent.send("hello"):
             pass
         assert len(agent.messages) == 3
