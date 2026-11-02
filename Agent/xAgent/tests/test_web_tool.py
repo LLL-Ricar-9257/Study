@@ -10,6 +10,7 @@ from core.errors import ToolError
 from core.tools.registry import ToolRegistry
 from core.tools.specs import (
     ALL_TOOL_SPECS,
+    EXTERNAL_TOOL_SPECS,
     FILE_TOOL_SPECS,
     RUNCLI_TOOL_SPECS,
     SEARCH_TOOL_SPECS,
@@ -163,6 +164,7 @@ def test_fetch_web_is_registered_for_llm(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "fetchWeb" in {spec.name for spec in ALL_TOOL_SPECS}
     assert len(ALL_TOOL_SPECS) == (
         len(FILE_TOOL_SPECS)
+        + len(EXTERNAL_TOOL_SPECS)
         + len(WEB_TOOL_SPECS)
         + len(SEARCH_TOOL_SPECS)
         + len(RUNCLI_TOOL_SPECS)

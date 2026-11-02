@@ -119,7 +119,8 @@ class FileAgentApp(App[None]):
                     markup=False,
                 )
                 yield Static(
-                    f"内置工具\n{TOOL_COUNT} 项能力\n文件 / 网页 / 搜索 / 命令行 / 技能 / 日期时间",
+                    f"内置工具\n{TOOL_COUNT} 项能力\n"
+                    "文件 / 外部读取 / 网页 / 搜索 / 命令行 / 技能 / 日期时间",
                     classes="side-block",
                     markup=False,
                 )

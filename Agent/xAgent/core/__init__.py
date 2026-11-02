@@ -30,6 +30,7 @@ from .events import (
 from .models import ChatChunk, ChatMessage, ToolCall, ToolCallDelta
 from .skills import SkillInfo, SkillsCatalog
 from .tools import TOOL_COUNT
+from .tools.external import ExternalFileToolset
 from .tools.registry import ToolRegistry
 from .tools.skills import SkillToolset
 from .tools.types import ToolResult, ToolSpec
@@ -44,6 +45,7 @@ __all__ = [
     "ChatChunk",
     "ChatMessage",
     "ConfigurationError",
+    "ExternalFileToolset",
     "FileAgent",
     "LLMSettings",
     "ModelCallError",

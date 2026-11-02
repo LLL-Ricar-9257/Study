@@ -57,7 +57,9 @@ class FailingModel:
         yield ChatChunk()  # pragma: no cover
 
 
-def _agent(tmp_path: Path, model: Any, max_rounds: int = 20) -> FileAgent:
+def _agent(
+    tmp_path: Path, model: Any, max_rounds: int | None = None
+) -> FileAgent:
     toolset = FileToolset(tmp_path, limits=AgentLimits())
     return FileAgent(
         model=model,
@@ -134,6 +136,44 @@ def test_busy_agent_rejects_concurrent_turn(tmp_path: Path) -> None:
 
     asyncio.run(scenario())
     assert len(agent.messages) == 1
+
+
+def test_tool_round_limit_is_disabled_by_default(tmp_path: Path) -> None:
+    script = ChatChunk(
+        tool_call_deltas=(
+            ToolCallDelta(
+                index=0,
+                id="call_x",
+                name="get_current_directory",
+                arguments="{}",
+            ),
+        )
+    )
+    # 超过旧版默认上限 20 轮，确认默认不再截断工具循环。
+    model = ScriptedModel([[script] for _ in range(25)] + [[ChatChunk(text="完成")]])
+    agent = _agent(tmp_path, model)
+
+    async def scenario() -> list[Any]:
+        return [event async for event in agent.send("loop")]
+
+    events = asyncio.run(scenario())
+    assert sum(isinstance(event, ToolStarted) for event in events) == 25
+    assert not any(isinstance(event, ToolRoundLimitReached) for event in events)
+    assert isinstance(events[-1], TurnCompleted)
+    assert not events[-1].limit_reached
+    assert events[-1].content == "完成"
+
+
+def test_zero_tool_rounds_means_unlimited(tmp_path: Path) -> None:
+    model = ScriptedModel([[ChatChunk(text="ok")]])
+    agent = _agent(tmp_path, model, max_rounds=0)
+
+    async def scenario() -> list[Any]:
+        return [event async for event in agent.send("hello")]
+
+    events = asyncio.run(scenario())
+    assert isinstance(events[-1], TurnCompleted)
+    assert not events[-1].limit_reached
 
 
 def test_tool_round_limit(tmp_path: Path) -> None:

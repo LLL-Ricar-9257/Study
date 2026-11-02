@@ -4,11 +4,17 @@ from pathlib import Path
 
 import pytest
 
-from core.config import _discover_config_path, load_config
+from core.config import AgentLimits, _discover_config_path, load_config
 from core.errors import ConfigurationError
 
 
-def _write_config(path: Path, *, workspace: str = "", api_key: str = "test-key") -> Path:
+def _write_config(
+    path: Path,
+    *,
+    workspace: str = "",
+    api_key: str = "test-key",
+    max_tool_rounds: str = "3",
+) -> Path:
     path.write_text(
         "[llm]\n"
         f"api_key = {api_key}\n"
@@ -17,7 +23,7 @@ def _write_config(path: Path, *, workspace: str = "", api_key: str = "test-key")
         "timeout_seconds = 30\n"
         "\n[agent]\n"
         f"workspace = {workspace}\n"
-        "max_tool_rounds = 3\n"
+        f"max_tool_rounds = {max_tool_rounds}\n"
         "max_text_bytes = 1024\n"
         "default_max_chars = 100\n"
         "max_list_items = 10\n",
@@ -80,6 +86,30 @@ def test_missing_api_key_is_rejected(
 def test_missing_explicit_config_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="找不到配置文件"):
         _discover_config_path(tmp_path / "nope.ini")
+
+
+@pytest.mark.parametrize("value", ["", "0", "none", "unlimited"])
+def test_max_tool_rounds_can_be_unlimited(
+    tmp_path: Path, value: str
+) -> None:
+    config_file = _write_config(tmp_path / "config.ini", max_tool_rounds=value)
+    config = load_config(config_file)
+    assert config.limits.max_tool_rounds is None
+
+
+@pytest.mark.parametrize("value", ["-1", "abc"])
+def test_invalid_max_tool_rounds_is_rejected(
+    tmp_path: Path, value: str
+) -> None:
+    config_file = _write_config(tmp_path / "config.ini", max_tool_rounds=value)
+    with pytest.raises(ConfigurationError, match="max_tool_rounds"):
+        load_config(config_file)
+
+
+def test_agent_limits_zero_tool_rounds_means_unlimited() -> None:
+    assert AgentLimits(max_tool_rounds=0).max_tool_rounds is None
+    with pytest.raises(ConfigurationError, match="max_tool_rounds"):
+        AgentLimits(max_tool_rounds=-1)
 
 
 def _write_search_config(path: Path, *, search: str) -> Path:

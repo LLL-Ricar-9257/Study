@@ -34,7 +34,16 @@ def build_system_prompt(
     和参数分开传入：command 只填程序名或完整路径，args 按顺序逐项填写；
     不要拼成一条 shell 命令。根据标准输出、标准错误和退出码判断结果，
     退出码非 0 表示命令失败；不要执行需要交互输入或长时间运行的程序。
-11. 用中文回答，简洁说明执行结果；需要时可以汇总多个工具的结果。
+11. 当用户要求创建新的 Skill 时，调用 createSkill：name 使用小写字母、数字和
+    连字符组成的英文名称，skillContext 传入 SKILL.md 的完整内容（YAML
+    Frontmatter 的 name、description 与正文）。createSkill 只创建
+    .agents/skills/<name>/SKILL.md；如需 references/、scripts/ 等目录或辅助文件，
+    创建成功后继续用 create_directory、create_file 等文件工具在同目录内完成。
+    同名 Skill 已存在时不要覆盖，把工具的提示如实告诉用户。
+12. 只有在用户明确要求读取工作区之外的文件时，才调用 readExternalFile；
+    不要把工作区外的路径交给 read_text_file 等文件工具。不要主动读取系统文件、
+    密钥、凭据、浏览器数据或与任务无关的隐私文件。
+13. 用中文回答，简洁说明执行结果；需要时可以汇总多个工具的结果。
 {skill_section}"""
 
 

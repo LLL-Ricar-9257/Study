@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -9,10 +10,10 @@ from core import AgentLimits, AppConfig, LLMSettings
 from core.bootstrap import build_agent
 from core.errors import ToolError
 from core.prompts import build_system_prompt
-from core.skills import SkillsCatalog, bundled_root
+from core.skills import SkillsCatalog, bundled_root, normalize_skill_name
 from core.tools.registry import ToolRegistry
 from core.tools.skills import SkillToolset
-from core.tools.specs import SKILL_TOOL_SPECS
+from core.tools.specs import ALL_TOOL_SPECS, SKILL_TOOL_SPECS
 
 
 def _make_skill(
@@ -220,7 +221,10 @@ def test_load_skill_is_registered_for_llm(catalog: SkillsCatalog) -> None:
     toolset = SkillToolset(catalog)
     registry = ToolRegistry(toolset.registry_handlers(), SKILL_TOOL_SPECS)
 
-    assert [spec["function"]["name"] for spec in registry.schema()] == ["loadSkill"]
+    assert [spec["function"]["name"] for spec in registry.schema()] == [
+        "loadSkill",
+        "createSkill",
+    ]
     parameters = registry.schema()[0]["function"]["parameters"]
     assert parameters["required"] == ["name"]
     assert set(parameters["properties"]) == {"name", "filename"}
@@ -418,3 +422,216 @@ def test_bootstrap_can_disable_bundled_roots(
     assert "cwd-skill" in agent.messages[0].content
     assert "撰写通知" not in agent.messages[0].content
     asyncio.run(agent.aclose())
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("PDF Tools", "pdf-tools"),
+        ("pdf_tools", "pdf-tools"),
+        ("  My--Skill  ", "my-skill"),
+        ("skill.v2", "skill-v2"),
+        ("Café Tools", "cafe-tools"),
+        ("A1", "a1"),
+    ],
+)
+def test_normalize_skill_name(raw: str, expected: str) -> None:
+    assert normalize_skill_name(raw) == expected
+
+
+def test_create_skill_writes_valid_skill_md(tmp_path: Path) -> None:
+    catalog = SkillsCatalog.discover(tmp_path)
+    result = SkillToolset(catalog).create_skill(
+        "PDF Tools",
+        "---\n"
+        "name: pdf-tools\n"
+        "description: Extract text and tables from PDF files.\n"
+        "license: MIT\n"
+        "---\n\n"
+        "# PDF Tools\n\n"
+        "UNIQUE BODY MARKER\n",
+    )
+
+    skill_dir = tmp_path / ".agents" / "skills" / "pdf-tools"
+    assert skill_dir.is_dir()
+    assert sorted(entry.name for entry in skill_dir.iterdir()) == ["SKILL.md"]
+    assert "已创建 Skill：pdf-tools" in result
+    assert "create_directory" in result
+
+    text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert text.startswith("---\nname: pdf-tools\ndescription: ")
+    assert "license: MIT" in text
+    assert text.endswith("UNIQUE BODY MARKER\n")
+
+    discovered = SkillsCatalog.discover(tmp_path)
+    assert discovered.issues == ()
+    skill = discovered.get("pdf-tools")
+    assert skill is not None
+    assert skill.description == "Extract text and tables from PDF files."
+    assert "UNIQUE BODY MARKER" in SkillToolset(discovered).load_skill("pdf-tools")
+
+
+def test_create_skill_generates_frontmatter_when_missing(tmp_path: Path) -> None:
+    catalog = SkillsCatalog.discover(tmp_path)
+    SkillToolset(catalog).create_skill(
+        "Weekly_Report",
+        "# 周报生成\n\n按模板汇总本周进展。\n",
+    )
+
+    discovered = SkillsCatalog.discover(tmp_path)
+    skill = discovered.get("weekly-report")
+    assert skill is not None
+    assert skill.description == "周报生成"
+    assert "按模板汇总本周进展。" in SkillToolset(discovered).load_skill("weekly-report")
+
+
+def test_create_skill_quotes_ambiguous_description(tmp_path: Path) -> None:
+    catalog = SkillsCatalog.discover(tmp_path)
+    SkillToolset(catalog).create_skill(
+        "debugging",
+        "---\n"
+        "name: debugging\n"
+        'description: Fix errors: "quoted" and more.\n'
+        "---\n\n"
+        "# Debugging\n",
+    )
+
+    skill = SkillsCatalog.discover(tmp_path).get("debugging")
+    assert skill is not None
+    assert skill.description == 'Fix errors: "quoted" and more.'
+
+
+def test_create_skill_refuses_to_overwrite_registered_skill(tmp_path: Path) -> None:
+    _make_skill(tmp_path, "demo", name="demo", description="Original.")
+    skill_file = tmp_path / ".agents" / "skills" / "demo" / "SKILL.md"
+    original = skill_file.read_text(encoding="utf-8")
+    toolset = SkillToolset(SkillsCatalog.discover(tmp_path))
+
+    with pytest.raises(ToolError, match="已存在"):
+        toolset.create_skill(
+            "demo",
+            "---\nname: demo\ndescription: New.\n---\n\nNEW BODY\n",
+        )
+
+    assert skill_file.read_text(encoding="utf-8") == original
+
+
+def test_create_skill_respects_directory_alias(tmp_path: Path) -> None:
+    _make_skill(tmp_path, "demo", name="demo-skill", description="Original.")
+    toolset = SkillToolset(SkillsCatalog.discover(tmp_path))
+
+    with pytest.raises(ToolError, match="已存在"):
+        toolset.create_skill(
+            "demo",
+            "---\nname: demo\ndescription: Alias conflict.\n---\n\nBODY\n",
+        )
+    assert not (tmp_path / ".agents" / "skills" / "demo-skill" / "demo").exists()
+
+
+def test_create_skill_refuses_existing_directory(tmp_path: Path) -> None:
+    empty_dir = tmp_path / ".agents" / "skills" / "taken"
+    empty_dir.mkdir(parents=True)
+    toolset = SkillToolset(SkillsCatalog.discover(tmp_path))
+
+    with pytest.raises(ToolError, match="已存在"):
+        toolset.create_skill(
+            "taken",
+            "---\nname: taken\ndescription: Taken.\n---\n\nBODY\n",
+        )
+
+    assert list(empty_dir.iterdir()) == []
+
+
+def test_create_skill_rejects_invalid_or_unsafe_input(tmp_path: Path) -> None:
+    toolset = SkillToolset(SkillsCatalog.discover(tmp_path))
+
+    with pytest.raises(ToolError, match="英文名称"):
+        toolset.create_skill("撰写通知", "# 正文\n")
+    with pytest.raises(ToolError, match="路径分隔符"):
+        toolset.create_skill("../evil", "# 正文\n")
+    with pytest.raises(ToolError, match="不能为空"):
+        toolset.create_skill("", "# 正文\n")
+    with pytest.raises(ToolError, match="不能为空"):
+        toolset.create_skill("demo", "   ")
+
+    assert not (tmp_path / ".agents").exists()
+
+
+def test_create_skill_validates_frontmatter_and_body(tmp_path: Path) -> None:
+    toolset = SkillToolset(SkillsCatalog.discover(tmp_path))
+
+    with pytest.raises(ToolError, match="不一致"):
+        toolset.create_skill(
+            "alpha",
+            "---\nname: beta\ndescription: Mismatch.\n---\n\nBODY\n",
+        )
+    with pytest.raises(ToolError, match="缺少 description"):
+        toolset.create_skill("alpha", "---\nname: alpha\n---\n\n")
+    with pytest.raises(ToolError, match="缺少正文"):
+        toolset.create_skill(
+            "alpha",
+            "---\nname: alpha\ndescription: No body.\n---\n",
+        )
+    with pytest.raises(ToolError, match="结束分隔符"):
+        toolset.create_skill(
+            "alpha",
+            "---\nname: alpha\ndescription: Unterminated.\n",
+        )
+
+    assert not (tmp_path / ".agents" / "skills" / "alpha").exists()
+
+
+def test_create_skill_is_registered_for_llm(tmp_path: Path) -> None:
+    toolset = SkillToolset(SkillsCatalog.discover(tmp_path))
+    registry = ToolRegistry(toolset.registry_handlers(), SKILL_TOOL_SPECS)
+
+    assert "createSkill" in {spec.name for spec in ALL_TOOL_SPECS}
+    schema = next(
+        item["function"]["parameters"]
+        for item in registry.schema()
+        if item["function"]["name"] == "createSkill"
+    )
+    assert schema["required"] == ["name", "skillContext"]
+    assert set(schema["properties"]) == {"name", "skillContext"}
+
+    arguments = json.dumps(
+        {
+            "name": "Demo Skill",
+            "skillContext": (
+                "---\nname: demo-skill\ndescription: Demo skill.\n---\n\n# Demo\n"
+            ),
+        }
+    )
+    result = registry.execute("createSkill", arguments)
+    assert result.ok
+    assert "已创建 Skill：demo-skill" in result.content
+
+    duplicate = registry.execute("createSkill", arguments)
+    assert not duplicate.ok
+    assert "已存在" in duplicate.content
+
+def test_create_skill_preserves_extra_frontmatter_fields(tmp_path: Path) -> None:
+    catalog = SkillsCatalog.discover(tmp_path)
+    SkillToolset(catalog).create_skill(
+        "pdf-tools",
+        "---\n"
+        "name: pdf-tools\n"
+        "description: PDF tools.\n"
+        "license: MIT\n"
+        "metadata:\n"
+        "  author: xagent\n"
+        "  version: 1.0\n"
+        "allowed-tools: [Read, Write]\n"
+        "---\n\n"
+        "# PDF Tools\n",
+    )
+
+    text = (
+        tmp_path / ".agents" / "skills" / "pdf-tools" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert "license: MIT\n" in text
+    assert "metadata:\n  author: xagent\n  version: 1.0\n" in text
+    assert "allowed-tools: [Read, Write]\n" in text
+    # 只重写 name/description，原字段不会重复出现。
+    assert text.count("name:") == 1
+    assert text.count("description:") == 1
+    assert SkillsCatalog.discover(tmp_path).issues == ()

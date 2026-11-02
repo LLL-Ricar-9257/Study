@@ -196,6 +196,38 @@ def test_tool_card_keeps_tool_name() -> None:
     asyncio.run(scenario())
 
 
+def test_tool_card_is_collapsed_by_default_and_after_completion() -> None:
+    from textual.app import App
+
+    from tui.widgets import ToolActivity
+
+    class Host(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.card = ToolActivity("list_directory", '{"path": "."}')
+
+        def compose(self):
+            yield self.card
+
+    async def scenario() -> None:
+        app = Host()
+        async with app.run_test():
+            # 执行中、成功、失败都保持折叠，只通过标题展示状态。
+            assert app.card.collapsed is True
+            assert "执行中" in str(app.card.title)
+
+            app.card.complete(True, "ok", 12)
+            assert app.card.collapsed is True
+            assert "完成" in str(app.card.title)
+
+            app.card.complete(False, "boom", 3)
+            assert app.card.collapsed is True
+            assert "失败" in str(app.card.title)
+            assert app.card.has_class("tool-error")
+
+    asyncio.run(scenario())
+
+
 def test_command_palette_is_fully_chinese(tmp_path: Path) -> None:
     from textual.command import CommandInput, CommandList
 

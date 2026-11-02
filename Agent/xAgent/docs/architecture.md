@@ -34,6 +34,8 @@
 │ 适配器                       │  │ 适配器                  │
 │ llm/openai_chat.py           │  │ tools/filesystem.py     │
 │ OpenAI 适配器                 │  │ 文件工具适配器           │
+│                              │  │ tools/external.py       │
+│                              │  │ 工作区外只读读取         │
 │                              │  │ tools/web.py            │
 │                              │  │ curl + trafilatura      │
 │                              │  │ tools/search.py         │
@@ -57,7 +59,8 @@
 - `messages`：system / user / assistant / tool 消息历史；
 - `system_prompt`：只读属性，向 UI 暴露当前会话实际使用的系统提示词；
 - `asyncio.Lock`：同一会话串行处理；
-- `max_tool_rounds`：防止模型在工具循环中失控。
+- `max_tool_rounds`：可选的工具轮数上限；默认 `None` 表示不限制，直到模型不再
+  请求工具或用户取消。显式配置正整数时才会产生 `ToolRoundLimitReached`。
 
 `send(text)` 是**异步生成器**：
 
@@ -79,11 +82,11 @@
 | --- | --- | --- |
 | `TurnStarted` | 一轮开始 | 状态改为“思考中” |
 | `TextDelta` | 正文增量 | 追加到流式 Markdown |
-| `ToolStarted` | 开始调用工具 | 新建工具卡片 |
-| `ToolFinished` | 工具结束（成功或失败） | 更新卡片，失败展开 |
+| `ToolStarted` | 开始调用工具 | 新建默认折叠的工具卡片 |
+| `ToolFinished` | 工具结束（成功或失败） | 更新折叠卡片标题与详情 |
 | `TurnCompleted` | 正常结束 | 停止光标、恢复输入 |
 | `TurnFailed` | 失败且历史已回滚 | 显示错误 |
-| `ToolRoundLimitReached` | 达到工具轮数上限 | 显示提示 |
+| `ToolRoundLimitReached` | 达到显式配置的工具轮数上限 | 显示提示（默认不限制时不会出现） |
 
 事件不包含 OpenAI 原始 chunk、文件句柄或 UI 组件。
 
@@ -96,12 +99,19 @@ xAgent 自带目录（`core` 包上一级的 `.agents/skills`，扫描根由
 只扫描一次。它只读取到 Frontmatter 结束分隔符为止，解析必需的
 `name` / `description`，跳过格式不合法、缺少字段或重名的 Skill，并把原因记录在
 `issues` 中。`SKILL.md` 正文不会在初始化阶段进入上下文。除 Frontmatter 中的
-`name` 外，Skill 目录名也可作为 `loadSkill` 的别名。
+`name` 外，Skill 目录名也可作为 `loadSkill` 的别名。`core.skills` 还提供
+`normalize_skill_name()`、`split_skill_markdown()`、`render_skill_markdown()` 和
+`read_skill_metadata()`，把名称规范化与 SKILL.md 格式规则收敛在领域层，
+供 `createSkill` 复用并自校验。
 
 ### `core.tools`
 
 - `paths.Workspace`：统一解析并校验路径，越界时抛出 `WorkspaceBoundaryError`。
 - `filesystem.FileToolset`：10 个文件工具 + 系统时间工具的实现，不依赖全局变量，便于测试和多工作区。
+- `external.ExternalFileToolset`：`readExternalFile` 的实现，提供工作区外的**只读**例外：
+  绝对路径或相对当前工作目录的路径都可以，只读取纯文本并识别编码，沿用
+  `AgentLimits` 的大小/字符数上限；拒绝设备、管道和 `\\?\GLOBALROOT` 路径。
+  它不经过 `Workspace.resolve()`，因此不会放宽其他文件工具的沙箱。
 - `web.WebToolset`：`fetchWeb` 的实现。通过参数列表调用系统 `curl`（不使用 shell）下载 HTML，
   再用 `trafilatura` 提取正文并输出 Markdown；只允许 http/https，并限制超时与下载体积。
 - `search.SearchToolset`：`searchweb` 的实现。从 `SearchSettings` 读取百度千帆 API Key，
@@ -111,13 +121,18 @@ xAgent 自带目录（`core` 包上一级的 `.agents/skills`，扫描根由
   通过 `subprocess.run(..., shell=False)` 在 Agent 工作区执行，返回 stdout、stderr
   和退出码；固定超时 30 秒，输出超过上限时截断并标注。本阶段不实现命令白名单、
   黑名单或审批，仅用于受控教学环境。
-- `skills.SkillToolset`：`loadSkill` 的实现。只传 `name` 时返回 `SKILL.md` 全文；
-  传 `filename` 时按 Skill 相对路径、项目相对路径、绝对路径依次精确匹配，
-  纯文件名则递归搜索该 Skill 目录。所有结果都必须位于该 Skill 目录内部；
-  多个同名文件返回候选路径而不是任意选择。
-- `specs.FILE_TOOL_SPECS` / `specs.WEB_TOOL_SPECS` / `specs.SEARCH_TOOL_SPECS` /
-  `specs.RUNCLI_TOOL_SPECS` / `specs.SKILL_TOOL_SPECS`：工具 JSON Schema，
-  与实现解耦；`ALL_TOOL_SPECS` 是注册时使用的完整声明。
+- `skills.SkillToolset`：`loadSkill` 与 `createSkill` 的实现。`loadSkill` 只传
+  `name` 时返回 `SKILL.md` 全文；传 `filename` 时按 Skill 相对路径、项目相对路径、
+  绝对路径依次精确匹配，纯文件名则递归搜索该 Skill 目录。所有结果都必须位于该
+  Skill 目录内部；多个同名文件返回候选路径而不是任意选择。`createSkill` 在
+  `<项目根>/.agents/skills/<name>/` 下创建目录并写入 `SKILL.md`：先用
+  `normalize_skill_name()` 生成合法目录名，再校验 Frontmatter、复用或生成
+  `name` / `description`，最后以独占方式写文件并回读校验。已注册 Skill、
+  同名目录（含大小写差异和目录别名）一律拒绝覆盖。工具不创建 `references/`、
+  `scripts/` 等附加目录，模型需要时继续调用文件工具。
+- `specs.FILE_TOOL_SPECS` / `specs.EXTERNAL_TOOL_SPECS` / `specs.WEB_TOOL_SPECS` /
+  `specs.SEARCH_TOOL_SPECS` / `specs.RUNCLI_TOOL_SPECS` / `specs.SKILL_TOOL_SPECS`：
+  工具 JSON Schema，与实现解耦；`ALL_TOOL_SPECS` 是注册时使用的完整声明。
 - `registry.ToolRegistry`：校验 JSON 参数、绑定签名、隔离异常。
   工具失败被转换为 `ToolResult(ok=False)`，作为 tool 消息回传给模型，
   不会把异常抛到 UI。
@@ -199,14 +214,20 @@ TUI 启动时会把 `FileAgent.system_prompt` 渲染为可折叠的 `SystemPromp
 
 ### 新增 Skill
 
-Skill 是内容扩展，不需要改代码：
+Skill 是内容扩展，通常不需要改代码：
 
 1. 在启动目录、工作区或 xAgent 仓库根（自带目录）创建
-   `.agents/skills/<skill-name>/SKILL.md`；
+   `.agents/skills/<skill-name>/SKILL.md`；也可以让模型调用 `createSkill`，
+   由自然语言要求生成目录和 `SKILL.md`（`name` 为英文 slug，
+   `skillContext` 为完整的 SKILL.md 内容）；
 2. Frontmatter 至少包含 `name` 和 `description`；
 3. 需要引用的附件放在同一 Skill 目录内，模型通过
-   `loadSkill(name, filename=...)` 按需读取；
-4. 重启 xAgent 后生效（同名 Skill 按启动目录 > 工作区 > 自带目录取用）。
+   `loadSkill(name, filename=...)` 按需读取；`createSkill` 只生成最小骨架，
+   `references/`、`scripts/` 等目录由模型继续调用 `create_directory`、
+   `create_file` 等文件工具创建；
+4. 已存在的 Skill 不会被 `createSkill` 覆盖；文件内容的修改仍通过
+   `edit_text_file` 等文件工具完成；
+5. 重启 xAgent 或开始新会话后生效（同名 Skill 按启动目录 > 工作区 > 自带目录取用）。
    正文只在加载时进入上下文，因此可以按任务组织较长的流程说明和参考文件。
 
 ### 新增模型供应商
@@ -228,7 +249,8 @@ Skill 是内容扩展，不需要改代码：
 - **模型错误**：清理本轮新增消息，避免半截 assistant/tool 历史污染下一轮。
 - **用户取消**：关闭生成器，核心回滚未完成的一轮。
 - **工具错误**：不终止对话，错误文本回传模型，由模型解释给用户。
-- **工具轮数超限**：停止循环，写入一条明确的 assistant 说明。
+- **工具轮数**：默认不限制，直到模型不再请求工具或用户取消；只有显式配置
+  `max_tool_rounds` 正整数时才在上限处停止循环并写入说明。
 - **文件写入**：使用临时文件 + `os.replace`，避免中途失败破坏原文件。
 - **网页抓取**：只允许 http/https；curl 通过参数列表调用且不使用 shell；
   下载失败、超时、非 HTML、解析失败和正文为空都转换为可读的 `ToolError`。
@@ -238,7 +260,10 @@ Skill 是内容扩展，不需要改代码：
   默认 30 秒超时，stdout/stderr 超长时截断并标注。本阶段没有白名单、黑名单或审批，
   命令以当前用户权限执行，仅适用于受控教学环境。
 - **路径安全**：所有相对路径基于工作区；解析后必须仍位于工作区内；
-  根目录不可删除或重命名。
+  根目录不可删除或重命名。唯一例外是只读的 `readExternalFile`，它只在用户
+  明确要求时读取工作区外纯文本，不提供写操作，也不改变其他工具的工作区校验。
+- **工作区外读取**：拒绝设备、管道和全局命名空间路径；沿用文本大小上限，
+  二进制文件会被拒绝；返回内容标注读取通道和安全提示，便于审计。
 - **Skill 加载**：初始化只解析 Frontmatter；正文和附件仅在 `loadSkill` 时读取。
   附件路径解析后必须位于指定 Skill 目录内，`..`、外部绝对路径和符号链接逃逸
   都会被拒绝；同名附件返回候选路径。
@@ -249,11 +274,12 @@ UI 会展示每个工具的执行结果。
 ## 7. 测试策略
 
 - `tests/test_filesystem_tools.py`：文件工具与时间工具、路径越界、覆盖保护、注册表错误。
+- `tests/test_external_file_tool.py`：工作区外只读、相对/绝对路径、编码识别、截断、大小限制、目录/二进制/非法路径拒绝与注册，并确认普通文件工具仍受沙箱限制。
 - `tests/test_web_tool.py`：网页抓取、Markdown 转换、URL 校验、超时/失败/解析异常、截断和注册。
 - `tests/test_search_tool.py`：搜索请求构造、摘要/标题/URL 输出、缺少 Key、HTTP/API/网络/解析错误、截断和注册。
 - `tests/test_runcli_tool.py`：参数列表执行、`shell=False`、非零退出码、超时、输出截断、缺少程序、参数校验、注册与真实子进程。
-- `tests/test_skills.py`：Skill 发现与 Frontmatter、提示词注入、按需加载、相对/项目/绝对路径、递归唯一匹配、同名候选、越界拒绝与注册。
-- `tests/test_agent.py`：工具循环、模型失败回滚、并发拒绝、轮数上限、关闭。
-- `tests/test_config.py`：配置优先级、相对工作区、Key 隐藏、错误配置。
+- `tests/test_skills.py`：Skill 发现与 Frontmatter、提示词注入、按需加载、相对/项目/绝对路径、递归唯一匹配、同名候选、越界拒绝与注册；以及 `createSkill` 的名称规范化、Frontmatter 生成/保留、已存在拒绝覆盖和参数校验。
+- `tests/test_agent.py`：工具循环、无上限多轮工具调用、可选轮数上限、模型失败回滚、并发拒绝、关闭。
+- `tests/test_config.py`：配置优先级、可选工具轮数上限（留空/0 表示不限制）、相对工作区、Key 隐藏、错误配置。
 - `tests/test_architecture.py`：core 不得依赖 Textual/Rich，事件契约公开。
-- `tests/test_tui.py`：Textual 启动、流式回复、取消回滚、系统剪贴板粘贴、字符宽度归一化、系统提示词折叠面板和无边框样式约束。
+- `tests/test_tui.py`：Textual 启动、流式回复、取消回滚、工具调用卡片默认折叠、系统剪贴板粘贴、字符宽度归一化、系统提示词折叠面板和无边框样式约束。

@@ -23,7 +23,7 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.ini"
 
 _DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
 _DEFAULT_MODEL = "deepseek-chat"
-_DEFAULT_MAX_TOOL_ROUNDS = 20
+_DEFAULT_MAX_TOOL_ROUNDS: int | None = None
 _DEFAULT_MAX_TEXT_BYTES = 5 * 1024 * 1024
 _DEFAULT_MAX_CHARS = 50_000
 _DEFAULT_MAX_LIST_ITEMS = 2_000
@@ -68,16 +68,25 @@ class SearchSettings:
 
 @dataclass(frozen=True, slots=True)
 class AgentLimits:
-    """核心层运行时限额。放入配置可避免 TUI/Web 各自硬编码。"""
+    """核心层运行时限额。放入配置可避免 TUI/Web 各自硬编码。
 
-    max_tool_rounds: int = _DEFAULT_MAX_TOOL_ROUNDS
+    ``max_tool_rounds`` 默认为 ``None``，表示单轮对话不限制工具调用轮数；
+    只有在配置中显式写入正整数时才启用上限。
+    """
+
+    max_tool_rounds: int | None = _DEFAULT_MAX_TOOL_ROUNDS
     max_text_bytes: int = _DEFAULT_MAX_TEXT_BYTES
     default_max_chars: int = _DEFAULT_MAX_CHARS
     max_list_items: int = _DEFAULT_MAX_LIST_ITEMS
 
     def __post_init__(self) -> None:
-        if self.max_tool_rounds < 1:
-            raise ConfigurationError("max_tool_rounds 必须大于等于 1")
+        if self.max_tool_rounds is not None:
+            if self.max_tool_rounds < 0:
+                raise ConfigurationError(
+                    "max_tool_rounds 不能为负数；留空或 0 表示不限制工具轮数"
+                )
+            if self.max_tool_rounds == 0:
+                object.__setattr__(self, "max_tool_rounds", None)
         if self.max_text_bytes < 1 or self.default_max_chars < 1:
             raise ConfigurationError("文本读取上限必须大于 0")
         if self.max_list_items < 1:
@@ -153,6 +162,22 @@ def _positive_int(value: str, label: str, default: int) -> int:
         raise ConfigurationError(f"{label} 必须是整数：{value}") from exc
     if number < 1:
         raise ConfigurationError(f"{label} 必须大于 0")
+    return number
+
+
+def _optional_positive_int(value: str, label: str) -> int | None:
+    """解析可选上限：留空、0、none/unlimited/off 都表示不限制。"""
+    text = (value or "").strip()
+    if not text or text.casefold() in {"0", "none", "unlimited", "off", "不限制"}:
+        return None
+    try:
+        number = int(text)
+    except ValueError as exc:
+        raise ConfigurationError(f"{label} 必须是整数：{value}") from exc
+    if number < 1:
+        raise ConfigurationError(
+            f"{label} 必须是正整数；留空或 0 表示不限制工具轮数"
+        )
     return number
 
 
@@ -248,10 +273,9 @@ def load_config(
     resolved_workspace = _resolve_workspace(config_workspace, config_path=path)
 
     limits = AgentLimits(
-        max_tool_rounds=_positive_int(
+        max_tool_rounds=_optional_positive_int(
             agent_section.get("max_tool_rounds", ""),
             "max_tool_rounds",
-            _DEFAULT_MAX_TOOL_ROUNDS,
         ),
         max_text_bytes=_positive_int(
             agent_section.get("max_text_bytes", ""),

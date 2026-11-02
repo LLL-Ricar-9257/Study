@@ -1,4 +1,5 @@
-"""文件工具、系统时间、网页抓取、网络搜索、本地命令行与 Skill 加载的 JSON Schema 声明。
+"""文件工具、工作区外读取、系统时间、网页抓取、网络搜索、本地命令行与
+Skill 加载/创建的 JSON Schema 声明。
 
 声明与实现分离：新增/调整工具描述不会影响文件操作实现。
 """
@@ -229,6 +230,37 @@ FILE_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ),
 )
 
+EXTERNAL_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name="readExternalFile",
+        description=(
+            "读取工作区之外的纯文本文件（只读）。"
+            "当用户明确要求查看、读取或总结工作区以外路径的文件时使用，"
+            "例如桌面、下载目录、其他项目或绝对路径下的文件。"
+            "path 可以是绝对路径，也可以是相对于当前工作目录的路径；"
+            "普通文件工具仍然只能访问工作区，本工具不修改任何文件。"
+            "只支持纯文本，会自动识别编码，内容过长时截断。"
+            "不要用它读取与任务无关的私密文件，如密钥、凭据、浏览器数据。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "要读取的文件路径，支持绝对路径或相对当前工作目录的路径",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "最多读取的字符数，默认 50000",
+                    "default": 50_000,
+                },
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    ),
+)
+
 WEB_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="fetchWeb",
@@ -344,10 +376,49 @@ SKILL_TOOL_SPECS: tuple[ToolSpec, ...] = (
             "additionalProperties": False,
         },
     ),
+    ToolSpec(
+        name="createSkill",
+        description=(
+            "根据用户要求创建一个新的 Agent Skill：在当前项目的 "
+            ".agents/skills/ 下创建与 name 对应的英文子目录，并写入 SKILL.md。"
+            "当用户要求创建、新增或生成一个 Skill 时调用。"
+            "本工具只创建目录和 SKILL.md；若还需要 references/、scripts/ 等目录或"
+            "其他辅助文件，创建成功后继续调用 create_directory、create_file 等文件工具。"
+            "name 必须是能转换为小写字母、数字和连字符的英文名称；"
+            "skillContext 传入 SKILL.md 的完整内容，建议包含 YAML Frontmatter 的 "
+            "name、description 和正文。"
+            "如果同名 Skill 已存在，工具会返回明确提示并且不覆盖原内容。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "Skill 名称，用于生成子目录名；"
+                        "统一采用小写字母、数字和连字符组成的英文格式，"
+                        "例如 pdf-tools、write-weekly-report。"
+                        "工具会把空格、下划线等规范为连字符。"
+                    ),
+                },
+                "skillContext": {
+                    "type": "string",
+                    "description": (
+                        "要写入 SKILL.md 的完整内容。建议以 YAML Frontmatter 开头，"
+                        "包含与 name 一致的 name 和简明的 description，空行后写正文；"
+                        "若省略 Frontmatter，工具会用 name 和正文首段自动补齐。"
+                    ),
+                },
+            },
+            "required": ["name", "skillContext"],
+            "additionalProperties": False,
+        },
+    ),
 )
 
 ALL_TOOL_SPECS = (
     FILE_TOOL_SPECS
+    + EXTERNAL_TOOL_SPECS
     + WEB_TOOL_SPECS
     + SEARCH_TOOL_SPECS
     + RUNCLI_TOOL_SPECS

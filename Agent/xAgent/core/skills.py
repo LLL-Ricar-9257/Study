@@ -1,4 +1,4 @@
-"""Agent Skills 的发现与元数据解析。
+"""Agent Skills 的发现、元数据解析与 SKILL.md 生成。
 
 Skill 约定：``<根目录>/.agents/skills/<skill-name>/SKILL.md``，文件开头是
 YAML Frontmatter，必须声明 ``name`` 和 ``description``。
@@ -15,16 +15,20 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Iterator
+import unicodedata
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-_SKILL_FILENAME = "SKILL.md"
-_SKILLS_RELATIVE_PATH = Path(".agents") / "skills"
+SKILL_FILENAME = "SKILL.md"
+SKILLS_RELATIVE_PATH = Path(".agents") / "skills"
+MAX_SKILL_NAME_LENGTH = 64
 _MAX_FRONTMATTER_LINES = 512
 _MAX_FRONTMATTER_CHARS = 128 * 1024
 _KEY_PATTERN = re.compile(r"^([A-Za-z0-9_.-]+)\s*:\s*(.*)$")
 _BLOCK_PATTERN = re.compile(r"^[|>][+-]?\d*$")
+_FRONTMATTER_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+_YAML_INDICATORS = tuple("-?:,[]{}#&*!|>'\"%@`")
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +68,7 @@ class SkillsCatalog:
         """
         roots = _resolve_roots(project_root, extra_roots, bundled_roots)
         root = roots[0]
-        skills_root = root / _SKILLS_RELATIVE_PATH
+        skills_root = root / SKILLS_RELATIVE_PATH
 
         issues: list[str] = []
         skills: list[SkillInfo] = []
@@ -123,6 +127,148 @@ def bundled_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def normalize_skill_name(name: str) -> str:
+    """把用户给出的 Skill 名称规范成目录名：小写字母、数字和连字符。
+
+    允许 ``PDF Tools``、``pdf_tools`` 这类写法，统一转换为 ``pdf-tools``。
+    中文等无法转换为 ASCII 的名称会被拒绝，让模型改传英文 slug，避免生成
+    不可移植的目录名。
+    """
+    if not isinstance(name, str):
+        raise ValueError("name 必须是字符串")
+
+    raw = unicodedata.normalize("NFKD", name)
+    raw = "".join(char for char in raw if not unicodedata.combining(char)).strip()
+    if not raw:
+        raise ValueError("name 不能为空")
+    if any(character in raw for character in ("/", "\\", "\x00")):
+        raise ValueError("name 不能包含路径分隔符或空字符")
+
+    text = re.sub(r"[\s_.]+", "-", raw.casefold())
+    text = re.sub(r"[^a-z0-9-]+", "", text)
+    text = re.sub(r"-{2,}", "-", text).strip("-")
+    if len(text) > MAX_SKILL_NAME_LENGTH:
+        text = text[:MAX_SKILL_NAME_LENGTH].rstrip("-")
+    if not text:
+        raise ValueError(
+            "name 必须能转换为小写字母、数字和连字符组成的英文名称，"
+            '例如 "write-weekly-report"；中文名称请同时给出对应的英文 slug'
+        )
+    return text
+
+
+def split_skill_frontmatter(text: str) -> tuple[tuple[str, ...] | None, str]:
+    """把 SKILL.md 文本拆成原始 Frontmatter 行与正文。
+
+    返回的 ``None`` 表示文本没有 Frontmatter（整段都是正文）；以 ``---``
+    开头却找不到结束分隔符时抛出 ``ValueError``，避免把坏掉的 Frontmatter
+    写进正文。
+    """
+    if not isinstance(text, str):
+        raise ValueError("skillContext 必须是字符串")
+
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
+    lines = normalized.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return None, normalized
+
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            return tuple(lines[1:index]), "\n".join(lines[index + 1 :])
+    raise ValueError("YAML Frontmatter 缺少结束分隔符 ---")
+
+
+def split_skill_markdown(text: str) -> tuple[dict[str, str], str]:
+    """拆出 Frontmatter 字段映射与正文；没有 Frontmatter 时字段映射为空。"""
+    raw_lines, body = split_skill_frontmatter(text)
+    if raw_lines is None:
+        return {}, body
+    return _parse_mapping(list(raw_lines)), body
+
+
+def strip_frontmatter_fields(
+    raw_lines: Sequence[str],
+    keys: Iterable[str],
+) -> tuple[str, ...]:
+    """从原始 Frontmatter 行中移除指定字段（含其续行），其余内容原样保留。
+
+    这样 ``license``、``allowed-tools`` 或嵌套的 ``metadata`` 等字段不会被
+    重新序列化而丢失结构。
+    """
+    drop = {key.casefold() for key in keys}
+    dropped_ranges = [
+        (start, end)
+        for key, _value, _block, start, end in _mapping_entries(list(raw_lines))
+        if key.casefold() in drop
+    ]
+    kept: list[str] = []
+    index = 0
+    while index < len(raw_lines):
+        matched = next(
+            (end for start, end in dropped_ranges if start == index),
+            None,
+        )
+        if matched is not None:
+            index = matched
+            continue
+        kept.append(raw_lines[index])
+        index += 1
+    return tuple(kept)
+
+
+def render_skill_markdown(
+    name: str,
+    description: str,
+    body: str = "",
+    extra_lines: Sequence[str] = (),
+) -> str:
+    """生成符合 Agent Skills 规范的 SKILL.md 文本。
+
+    ``name`` 由调用方保证已经规范化；``description`` 会按 YAML 标量规则
+    重新序列化，因此描述中的冒号、引号和换行不会破坏 Frontmatter 结构。
+    ``extra_lines`` 是原样保留的其他 Frontmatter 行。
+    """
+    if not _FRONTMATTER_KEY_PATTERN.match(name):
+        raise ValueError(f"Skill 名称不合法：{name}")
+
+    summary = " ".join(str(description).split())
+    if not summary:
+        raise ValueError("SKILL.md 缺少 description")
+
+    lines = ["---", f"name: {name}", f"description: {_yaml_scalar(summary)}"]
+    for raw in extra_lines:
+        if raw.strip() == "---":
+            raise ValueError("Frontmatter 中不能包含分隔符 ---")
+        if "\x00" in raw:
+            raise ValueError("Frontmatter 包含空字符")
+        lines.append(raw)
+    lines.append("---")
+
+    body_text = body.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    if not body_text.strip():
+        raise ValueError("SKILL.md 缺少正文内容")
+    return "\n".join(lines) + "\n\n" + body_text + "\n"
+
+
+def read_skill_metadata(path: str | Path) -> tuple[str, str] | None:
+    """读取 SKILL.md 的 name 与 description；文件格式不合法时返回 None。"""
+    return _read_metadata(Path(path))
+
+
+def _yaml_scalar(value: str) -> str:
+    """尽量输出可读的普通标量；有歧义时退化为双引号字符串。"""
+    text = " ".join(str(value).split())
+    if (
+        text
+        and not text.startswith(_YAML_INDICATORS)
+        and ": " not in text
+        and " #" not in text
+        and not text.endswith(":")
+    ):
+        return text
+    return json.dumps(text, ensure_ascii=False)
+
+
 def _resolve_roots(
     project_root: str | Path,
     extra_roots: Iterable[str | Path] = (),
@@ -152,7 +298,7 @@ def _scan_skills_root(
     seen: set[str],
     issues: list[str],
 ) -> None:
-    skills_root = root / _SKILLS_RELATIVE_PATH
+    skills_root = root / SKILLS_RELATIVE_PATH
     if not skills_root.is_dir():
         return
 
@@ -214,7 +360,7 @@ def _scan_skills_root(
 
 
 def _find_skill_file(directory: Path) -> Path | None:
-    exact = directory / _SKILL_FILENAME
+    exact = directory / SKILL_FILENAME
     if exact.is_file():
         return exact
     try:
@@ -222,7 +368,7 @@ def _find_skill_file(directory: Path) -> Path | None:
     except OSError:
         return None
     for entry in candidates:
-        if entry.is_file() and entry.name.casefold() == _SKILL_FILENAME.casefold():
+        if entry.is_file() and entry.name.casefold() == SKILL_FILENAME.casefold():
             return entry
     return None
 
@@ -276,7 +422,16 @@ def _read_lines_until_fence(path: Path, encoding: str) -> list[str] | None:
 
 def _parse_mapping(lines: list[str]) -> dict[str, str]:
     """解析 Frontmatter 中扁平的 key/value 映射，支持常用 YAML 标量写法。"""
-    fields: dict[str, str] = {}
+    return {
+        key: _combine_scalar(value, block)
+        for key, value, block, _start, _end in _mapping_entries(lines)
+    }
+
+
+def _mapping_entries(
+    lines: list[str],
+) -> Iterator[tuple[str, str, list[str], int, int]]:
+    """逐个产出 (key, 原始值, 续行, 起始行号, 结束行号)。"""
     index = 0
     while index < len(lines):
         raw = lines[index]
@@ -309,9 +464,8 @@ def _parse_mapping(lines: list[str]) -> dict[str, str]:
         while block and not block[-1]:
             block.pop()
 
-        fields[key] = _combine_scalar(value, block)
+        yield key, value, block, index, next_index
         index = next_index
-    return fields
 
 
 def _combine_scalar(value: str, block: list[str]) -> str:

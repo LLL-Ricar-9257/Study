@@ -1,5 +1,6 @@
-"""工具基础设施、文件系统、网页、搜索、命令行与 Skill 加载实现。"""
+"""工具基础设施、文件系统、工作区外读取、网页、搜索、命令行与 Skill 加载/创建实现。"""
 
+from .external import ExternalFileToolset
 from .filesystem import FileToolset
 from .registry import ToolRegistry
 from .runcli import RunCliToolset
@@ -7,6 +8,7 @@ from .search import SearchToolset
 from .skills import SkillToolset
 from .specs import (
     ALL_TOOL_SPECS,
+    EXTERNAL_TOOL_SPECS,
     FILE_TOOL_SPECS,
     RUNCLI_TOOL_SPECS,
     SEARCH_TOOL_SPECS,
@@ -20,12 +22,14 @@ TOOL_COUNT = len(ALL_TOOL_SPECS)
 
 __all__ = [
     "ALL_TOOL_SPECS",
+    "EXTERNAL_TOOL_SPECS",
     "FILE_TOOL_SPECS",
     "RUNCLI_TOOL_SPECS",
     "SEARCH_TOOL_SPECS",
     "SKILL_TOOL_SPECS",
     "TOOL_COUNT",
     "WEB_TOOL_SPECS",
+    "ExternalFileToolset",
     "FileToolset",
     "RunCliToolset",
     "SearchToolset",

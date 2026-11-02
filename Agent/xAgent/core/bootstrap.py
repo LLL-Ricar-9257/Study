@@ -1,4 +1,5 @@
-"""组合根：把配置、LLM 适配器、文件工具、网页工具、搜索工具、命令行工具和 Skill 组装成 Agent。
+"""组合根：把配置、LLM 适配器、文件工具、网页工具、搜索工具、命令行工具和
+Skill 加载/创建组装成 Agent。
 
 所有 UI（TUI / Web / Desktop）都调用同一个 build_agent，避免重复业务配置。
 """
@@ -13,6 +14,7 @@ from .config import AppConfig
 from .llm.openai_chat import OpenAIChatModel
 from .prompts import build_system_prompt
 from .skills import SkillsCatalog, bundled_root
+from .tools.external import ExternalFileToolset
 from .tools.filesystem import FileToolset
 from .tools.registry import ToolRegistry
 from .tools.runcli import RunCliToolset
@@ -51,6 +53,7 @@ def build_agent(
     )
 
     file_tools = FileToolset(config.workspace, limits=config.limits)
+    external_tools = ExternalFileToolset(limits=config.limits)
     web_tools = WebToolset(limits=config.limits)
     search_tools = SearchToolset(config.search, limits=config.limits)
     runcli_tools = RunCliToolset(config.workspace)
@@ -62,6 +65,7 @@ def build_agent(
     )
     handlers = (
         file_tools.registry_handlers()
+        | external_tools.registry_handlers()
         | web_tools.registry_handlers()
         | search_tools.registry_handlers()
         | runcli_tools.registry_handlers()

@@ -11,14 +11,20 @@
 - **Core / UI 分离**：`core` 不依赖 Textual、Rich，也不读写终端；`tui` 不直接操作文件或调用模型。
 - **事件流驱动**：核心通过 `AgentEvent` 异步流输出文本、工具调用、完成和错误状态；
   Textual、WebSocket、桌面端可以消费同一套事件。
-- **10 个文件工具 + 系统时间工具 + 网页抓取 + 网络搜索 + 本地命令行 + Skill 加载**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
-  获取当前日期、时间、时区和星期，用 `fetchWeb` 抓取网页正文并转换为 Markdown，
+- **10 个文件工具 + 工作区外只读 + 系统时间工具 + 网页抓取 + 网络搜索 + 本地命令行 + Skill 加载/创建**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
+  获取当前日期、时间、时区和星期，用 `readExternalFile` 读取用户明确指定的
+  工作区外纯文本文件（只读），用 `fetchWeb` 抓取网页正文并转换为 Markdown，
   用 `searchweb` 调用百度千帆 AI 搜索获取互联网实时信息，用 `Runcil`
-  运行本机已安装的任意 CLI 程序并返回 stdout / stderr / 退出码，以及用
-  `loadSkill` 按需加载 `.agents/skills` 中的 Agent Skill。
-- **工作区沙箱**：所有路径统一经过 `Workspace.resolve()` 校验，禁止访问工作区之外的文件。
-- **工具调用循环**：自动处理模型的多轮 function calling；工具错误回传给模型，不会中断界面。
-- **流式 TUI**：Markdown 增量渲染、工具调用折叠卡片、状态栏、取消生成、清空会话。
+  运行本机已安装的任意 CLI 程序并返回 stdout / stderr / 退出码，用
+  `loadSkill` 按需加载 `.agents/skills` 中的 Agent Skill，用 `createSkill`
+  根据自然语言要求生成新的 Skill 骨架。
+- **工作区沙箱**：普通文件操作统一经过 `Workspace.resolve()` 校验，禁止访问工作区
+  之外的文件；只有显式的只读工具 `readExternalFile` 可以在用户明确要求时读取
+  工作区外的纯文本文件。
+- **工具调用循环**：自动处理模型的多轮 function calling，**默认不限制单轮工具轮数**，
+  直到模型完成回答或用户按 Esc 取消；工具错误回传给模型，不会中断界面。
+- **流式 TUI**：Markdown 增量渲染、工具调用默认折叠卡片（点击标题展开参数与结果）、
+  状态栏、取消生成、清空会话。
 - **运行时系统提示词**：启动后会在会话区以**折叠**形式放置本轮实际使用的系统提示词
   （含工作区与 Skill 清单），点击标题或按 Enter 即可展开/收起；`/system` 可随时切换。
 - **焦点恢复重排**：窗口失焦或后台生成后重新激活时，强制重新布局会话并回到底部。
@@ -27,7 +33,7 @@
 - **马卡龙配色**：消息与工具调用不使用整块背景，仅用薄荷绿、奶油黄、粉色和淡紫做文字强调。
 - **终端宽度安全**：不使用 box-drawing 边框；Windows `cmd.exe` 启动时自动切换黑体，
   避免中英文混排造成边框/表格错位。
-- **可配置限额**：工具轮数、文本读取上限、目录列出的最大条目数。
+- **可配置限额**：可选的单轮工具轮数上限（默认不限制）、文本读取上限、目录列出的最大条目数。
 - **安全默认值**：API Key 不会进入 `repr`、日志或 UI 事件；`config.ini` 已被 Git 忽略。
 - **核心可独立测试**：工具、Agent、配置和架构约束均可在无终端环境下测试，另有 TUI 冒烟测试。
 
@@ -50,13 +56,14 @@ xAgent/
 │  │  └─ openai_chat.py          # OpenAI 兼容流式适配器
 │  └─ tools/
 │     ├─ filesystem.py           # 10 个文件工具 + 时间工具的实现
+│     ├─ external.py             # 工作区外只读读取（readExternalFile）
 │     ├─ web.py                  # curl 抓取 + trafilatura 正文提取（fetchWeb）
 │     ├─ search.py               # 百度千帆 AI 搜索（searchweb）
 │     ├─ runcli.py               # 本地命令行执行（Runcil）
-│     ├─ skills.py               # 按需加载 Skill（loadSkill）
+│     ├─ skills.py               # 按需加载 / 创建 Skill（loadSkill、createSkill）
 │     ├─ paths.py                # 工作区路径策略与名称校验
 │     ├─ registry.py             # 工具注册、JSON 参数校验、异常隔离
-│     ├─ specs.py                # 工具 JSON Schema 声明（文件 / 网页 / 搜索 / 命令行）
+│     ├─ specs.py                # 工具 JSON Schema 声明（文件 / 网页 / 搜索 / 命令行 / Skill）
 │     └─ types.py                # ToolSpec / ToolResult
 ├─ tui/                          # Textual 表现层
 │  ├─ app.py                     # 布局、输入、事件消费、生命周期
@@ -125,7 +132,8 @@ timeout_seconds = 120
 [agent]
 # 留空则使用启动时的当前目录；相对路径以配置文件目录为基准
 workspace =
-max_tool_rounds = 20
+# 单轮对话的工具调用轮数上限；留空或 0 表示不限制
+max_tool_rounds =
 max_text_bytes = 5242880
 default_max_chars = 50000
 max_list_items = 2000
@@ -234,6 +242,32 @@ Function Calling 的结果向模型返回可读的错误信息，由模型转告
 > `dir`、`cd`、`echo` 等由 Shell 内建提供的命令不是独立可执行程序，不能直接运行；
 > 请改用对应的独立程序，或显式调用 `cmd /c ...`、`powershell -Command ...`。
 
+## 读取工作区外文件（readExternalFile）
+
+普通文件工具受工作区沙箱限制，只能访问 `--workspace` 内的文件。当用户明确要求
+查看工作区以外的文件（桌面、下载目录、其他项目或任意绝对路径）时，模型会调用
+只读工具 `readExternalFile`：
+
+```json
+{"path": "D:\\work\\other-project\\README.md", "max_chars": 20000}
+```
+
+行为与限制：
+
+1. `path` 支持绝对路径，也支持相对于 xAgent 当前工作目录的路径；
+2. **只读**：不提供写入、删除、重命名能力，不会修改目标文件；
+3. 只支持纯文本，自动识别 UTF-8 / UTF-16 / GB18030 编码；二进制文件会被拒绝；
+4. 仍受 `max_text_bytes`（默认 5 MB）和 `max_chars`（默认 50000）限制，
+   超长内容会明确标注截断；
+5. 拒绝设备、管道和 `\\?\GLOBALROOT` 等特殊命名空间路径，避免读取时阻塞；
+6. 返回内容带有读取通道（`readExternalFile`）和“安全提示”标记，便于用户确认
+   这次读取走的是工作区外通道。
+
+安全说明：该工具不改变原有沙箱。`read_text_file`、`create_file`、`delete_file`
+等文件工具仍然拒绝工作区外的路径；`readExternalFile` 只提供只读例外，是否调用由
+系统提示约束——只在用户明确要求读取工作区外文件时使用，不主动读取密钥、凭据、
+浏览器数据等与任务无关的隐私文件。OS 层的文件权限仍然有效。
+
 ## Agent Skills（动态加载）
 
 xAgent 支持 [Agent Skills](https://agentskills.io/) 约定。程序初始化时，会按下面的
@@ -300,6 +334,36 @@ You can also load additional files referenced by a skill.
 格式不合法的 Skill 会被跳过，不影响 xAgent 启动；可通过 `SkillsCatalog.issues`
 查看跳过原因。
 
+### 创建 Skill（createSkill）
+
+当用户用自然语言要求“创建一个 Skill”时，模型会调用 `createSkill`：
+
+```json
+{
+  "name": "write-weekly-report",
+  "skillContext": "---\nname: write-weekly-report\ndescription: 按模板生成周报。\n---\n\n# 周报生成\n\n1. 收集本周进展……\n"
+}
+```
+
+工具的行为：
+
+1. 把 `name` 规范为**小写字母、数字和连字符**组成的英文目录名，例如
+   `PDF Tools` → `pdf-tools`、`weekly_report` → `weekly-report`；中文等无法
+   转换的名称会被拒绝，并提示模型改传英文 slug。
+2. 在当前项目的 `.agents/skills/<name>/` 下创建目录并写入 `SKILL.md`；
+   目录已存在、或同名 Skill 已注册时**不会覆盖**，而是返回明确提示，
+   由模型转告用户。
+3. `skillContext` 建议是完整的 `SKILL.md` 内容。若以 YAML Frontmatter 开头，
+   工具会校验 `name` 与参数一致并保留 `description` 及其他字段；若省略
+   Frontmatter，则用 `name` 和正文首段自动补齐，正文缺失时直接报错。
+   `description` 中的冒号、引号和换行会被安全地重新序列化为 YAML 标量，
+   保证生成的文件能被 `SkillsCatalog` 正常解析。
+4. 本工具**只创建目录和 `SKILL.md`**。需要 `references/`、`scripts/` 等目录
+   或辅助文件时，模型会继续调用 `create_directory`、`create_file` 等文件工具
+   在同目录内完成；工具的返回值里带有目标目录的绝对路径。
+5. 系统提示中的 Skill 清单在启动时生成，新建的 Skill 会在下次启动或新会话中
+   自动出现在清单里。
+
 ## TUI 操作
 
 | 操作 | 说明 |
@@ -319,6 +383,10 @@ You can also load additional files referenced by a skill.
 
 取消或模型失败时，核心会回滚本轮对话历史；但已经执行完成的文件操作不会被自动撤销，
 界面会展示工具执行结果。
+
+工具调用在会话区以**单行折叠卡片**显示，标题包含工具名和状态（执行中 / 完成 / 失败）
+以及耗时；点击标题或聚焦后按 Enter 可展开参数与完整结果，再次操作即可收起。
+这样连续多轮工具调用也不会占满会话区。
 
 ### Windows 终端字体
 

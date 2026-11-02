@@ -314,12 +314,14 @@ python chat_file_tools.py --self-test   # 不调用模型，直接验证 10 个�
 - `core` 不依赖 Textual / Rich，不读写终端；Agent 只通过 `AgentEvent` 异步事件流向 UI 输出状态。
 - `tui` 不直接操作文件、不创建 OpenAI 客户端，只消费核心事件。
 - OpenAI、文件系统和 UI 之间通过 `ChatModel`、`ToolRegistry` 与事件契约解耦，便于以后增加 Web / Desktop 界面。
-- 提供 **10 个文件工具 + 时间工具 + `fetchWeb` 网页抓取 + `searchweb` 网络搜索 + `Runcil` 本地命令行**，文件路径限制在工作区内。
-- 支持多轮工具调用、工具错误回传、取消生成和历史回滚。
+- 提供 **10 个文件工具 + 时间工具 + `readExternalFile` 工作区外只读 + `fetchWeb` 网页抓取 +
+  `searchweb` 网络搜索 + `Runcil` 本地命令行 + `loadSkill` / `createSkill`**；
+  普通文件操作限制在工作区内，`readExternalFile` 只提供用户明确要求时的只读例外。
+- 支持多轮工具调用（默认不限制轮数）、工具错误回传、取消生成和历史回滚。
 
 **TUI 功能：**
 
-- opencode 风格无边框输入区、马卡龙配色、流式 Markdown 与工具调用卡片。
+- opencode 风格无边框输入区、马卡龙配色、流式 Markdown 与默认折叠的工具调用卡片。
 - `Ctrl+P` 打开全中文命令面板；`Ctrl+V` 直接粘贴系统剪贴板；`Ctrl+L` 清空；`Esc` 取消当前生成。
 - Windows `cmd.exe` 启动时自动尝试切换黑体，减少中英文和边框错位。
 - 窗口失焦后重新激活时自动重排会话，修复后台生成造成的错位。
@@ -338,7 +340,7 @@ Copy-Item config.example.ini config.ini
 **验证：**
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q   # 64 passed
+.\.venv\Scripts\python.exe -m pytest -q   # 123 passed
 .\.venv\Scripts\ruff.exe check core tui tests
 ```
 

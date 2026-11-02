@@ -50,10 +50,20 @@ class FileAgent:
         model: ChatModel,
         tools: ToolRegistry,
         system_prompt: str,
-        max_tool_rounds: int = 20,
+        max_tool_rounds: int | None = None,
     ) -> None:
-        if max_tool_rounds < 1:
-            raise ValueError("max_tool_rounds 必须大于等于 1")
+        """创建会话。
+
+        ``max_tool_rounds`` 为 ``None`` 或 0 时不限制单轮对话的工具调用轮数，
+        直到模型不再请求工具或用户取消；显式传入正整数时才启用上限。
+        """
+        if max_tool_rounds is not None:
+            if max_tool_rounds < 0:
+                raise ValueError(
+                    "max_tool_rounds 不能为负数，或使用 None / 0 表示不限制"
+                )
+            if max_tool_rounds == 0:
+                max_tool_rounds = None
         self._model = model
         self._tools = tools
         self._system_prompt = system_prompt
@@ -119,7 +129,8 @@ class FileAgent:
             await close()
 
     async def _run_turn(self) -> AsyncIterator[AgentEvent]:
-        for round_index in range(self._max_tool_rounds):
+        round_index = 0
+        while self._max_tool_rounds is None or round_index < self._max_tool_rounds:
             text_parts: list[str] = []
             pending: dict[int, _PendingToolCall] = {}
 
@@ -163,6 +174,8 @@ class FileAgent:
                     content=result.content,
                     elapsed_ms=elapsed_ms,
                 )
+
+            round_index += 1
 
         message = (
             f"工具调用次数达到上限（{self._max_tool_rounds} 轮），已停止本轮操作。"

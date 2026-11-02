@@ -103,7 +103,7 @@ class SystemPromptCard(Collapsible):
 
 
 class ToolActivity(Collapsible):
-    """工具调用卡片。"""
+    """工具调用卡片：默认折叠，只占一行；点击标题可展开参数和结果。"""
 
     def __init__(self, name: str, arguments: str) -> None:
         self._tool_name = name
@@ -114,8 +114,8 @@ class ToolActivity(Collapsible):
         )
         super().__init__(
             self._body_widget,
-            title=Text(f"tool: {name}", style="bold #ffeaa7"),
-            collapsed=False,
+            title=self._build_title("执行中"),
+            collapsed=True,
             collapsed_symbol=">",
             expanded_symbol="v",
             classes="tool",
@@ -131,13 +131,17 @@ class ToolActivity(Collapsible):
                 ok=ok,
             )
         )
-        self.title = Text(
-            f"tool: {self._tool_name}",
-            style="bold #ffeaa7" if ok else "bold #ffb3c1",
-        )
+        self.title = self._build_title(state, ok=ok)
         if not ok:
             self.add_class("tool-error")
-        self.collapsed = ok
+        # 工具调用默认折叠，避免多轮工具调用占满会话区；需要细节时点击展开。
+        self.collapsed = True
+
+    def _build_title(self, state: str, *, ok: bool = True) -> Text:
+        return Text(
+            f"tool: {self._tool_name} | {state}",
+            style="bold #ffeaa7" if ok else "bold #ffb3c1",
+        )
 
     @staticmethod
     def _render_body(

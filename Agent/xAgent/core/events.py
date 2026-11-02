@@ -46,7 +46,10 @@ class ToolFinished:
 
 @dataclass(frozen=True, slots=True)
 class TurnCompleted:
-    """一轮请求正常结束。"""
+    """一轮请求正常结束。
+
+    ``limit_reached`` 只会在显式配置了 ``max_tool_rounds`` 且达到上限时出现。
+    """
 
     content: str
     limit_reached: bool = False
@@ -62,7 +65,7 @@ class TurnFailed:
 
 @dataclass(frozen=True, slots=True)
 class ToolRoundLimitReached:
-    """工具循环达到上限，核心将停止继续调用模型。"""
+    """工具循环达到显式配置的上限，核心将停止继续调用模型。"""
 
     limit: int
     message: str
