@@ -318,7 +318,8 @@ python chat_file_tools.py --self-test   # 不调用模型，直接验证 10 个�
   `searchweb` 网络搜索 + `Runcil` 本地命令行 + `loadSkill` / `createSkill`**；
   普通文件操作限制在工作区内，`readExternalFile` 只提供用户明确要求时的只读例外。
 - **MCP Client**：读取启动目录的 `.mcp.json`，连接 stdio / Streamable HTTP MCP Server，
-  自动发现工具并注册为 Function Calling 工具，单个服务器故障不影响本地工具。
+  自动发现工具并注册为 Function Calling 工具，单个服务器故障不影响本地工具；
+  支持用 `createMcp` 让模型校验并合并写入 MCP 配置。
 - 支持多轮工具调用（默认不限制轮数）、工具错误回传、取消生成和历史回滚。
 
 **TUI 功能：**
@@ -342,7 +343,7 @@ Copy-Item config.example.ini config.ini
 **验证：**
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q   # 140 passed, 1 skipped
+.\.venv\Scripts\python.exe -m pytest -q   # 167 passed, 1 skipped
 .\.venv\Scripts\ruff.exe check core tui tests scripts
 ```
 

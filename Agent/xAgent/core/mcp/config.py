@@ -198,21 +198,54 @@ def load_mcp_config(
     )
 
 
+def parse_server_entry(
+    name: str,
+    raw: Mapping[str, Any],
+    *,
+    base_dir: str | Path | None = None,
+    expand_env: bool = True,
+) -> McpServerConfig:
+    """校验单个服务器配置，供 ``load_mcp_config`` 与 ``createMcp`` 共用。
+
+    ``expand_env=False`` 时只做结构与类型校验，保留 ``${VAR}`` 原样：
+    写入 ``.mcp.json`` 前不能要求这些环境变量当前已存在。
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise ConfigurationError("服务器名称必须是非空字符串")
+    if not isinstance(raw, Mapping):
+        raise ConfigurationError("服务器配置必须是 JSON 对象")
+    directory = Path(base_dir).expanduser().resolve() if base_dir else Path.cwd()
+    return _parse_server(
+        name.strip(),
+        raw,
+        base_dir=directory,
+        expand_env=expand_env,
+    )
+
+
 def _parse_server(
     name: str,
     raw: Mapping[str, Any],
     *,
     base_dir: Path,
+    expand_env: bool = True,
 ) -> McpServerConfig:
     transport = _normalize_transport(raw)
 
     if transport == "stdio":
-        command = _string_field(raw, "command", f"{name}.command")
+        command = _string_field(
+            raw, "command", f"{name}.command", expand=expand_env
+        )
         if not command:
             raise ConfigurationError("stdio 服务器必须提供 command")
-        args = _string_list(raw.get("args"), f"{name}.args")
-        env = _string_map(raw.get("env"), f"{name}.env")
-        cwd = _resolve_cwd(raw.get("cwd"), base_dir=base_dir, label=f"{name}.cwd")
+        args = _string_list(raw.get("args"), f"{name}.args", expand=expand_env)
+        env = _string_map(raw.get("env"), f"{name}.env", expand=expand_env)
+        cwd = _resolve_cwd(
+            raw.get("cwd"),
+            base_dir=base_dir,
+            label=f"{name}.cwd",
+            expand=expand_env,
+        )
         return McpServerConfig(
             name=name,
             transport="stdio",
@@ -222,7 +255,7 @@ def _parse_server(
             cwd=cwd,
         )
 
-    url = _string_field(raw, "url", f"{name}.url")
+    url = _string_field(raw, "url", f"{name}.url", expand=expand_env)
     if not url:
         raise ConfigurationError("streamable_http 服务器必须提供 url")
     parsed = urlparse(url)
@@ -230,7 +263,7 @@ def _parse_server(
         raise ConfigurationError(
             f"url 必须是合法的 http/https 地址：{url}"
         )
-    headers = _string_map(raw.get("headers"), f"{name}.headers")
+    headers = _string_map(raw.get("headers"), f"{name}.headers", expand=expand_env)
     return McpServerConfig(
         name=name,
         transport="streamable_http",
@@ -287,16 +320,23 @@ def _expand_env(value: str, *, label: str) -> str:
     return _ENV_REFERENCE.sub(replace, value)
 
 
-def _string_field(raw: Mapping[str, Any], key: str, label: str) -> str:
+def _string_field(
+    raw: Mapping[str, Any],
+    key: str,
+    label: str,
+    *,
+    expand: bool = True,
+) -> str:
     value = raw.get(key)
     if value is None:
         return ""
     if not isinstance(value, str):
         raise ConfigurationError(f"{label} 必须是字符串")
-    return _expand_env(value.strip(), label=label)
+    text = value.strip()
+    return _expand_env(text, label=label) if expand else text
 
 
-def _string_list(value: Any, label: str) -> tuple[str, ...]:
+def _string_list(value: Any, label: str, *, expand: bool = True) -> tuple[str, ...]:
     if value is None:
         return ()
     if isinstance(value, str) or not isinstance(value, (list, tuple)):
@@ -305,11 +345,13 @@ def _string_list(value: Any, label: str) -> tuple[str, ...]:
     for index, item in enumerate(value):
         if not isinstance(item, str):
             raise ConfigurationError(f"{label}[{index}] 必须是字符串")
-        items.append(_expand_env(item, label=f"{label}[{index}]"))
+        items.append(
+            _expand_env(item, label=f"{label}[{index}]") if expand else item
+        )
     return tuple(items)
 
 
-def _string_map(value: Any, label: str) -> dict[str, str]:
+def _string_map(value: Any, label: str, *, expand: bool = True) -> dict[str, str]:
     if value is None:
         return {}
     if not isinstance(value, Mapping):
@@ -320,16 +362,25 @@ def _string_map(value: Any, label: str) -> dict[str, str]:
             raise ConfigurationError(f"{label} 的键必须是非空字符串")
         if not isinstance(item, str):
             raise ConfigurationError(f"{label}.{key} 必须是字符串")
-        result[key] = _expand_env(item, label=f"{label}.{key}")
+        result[key] = (
+            _expand_env(item, label=f"{label}.{key}") if expand else item
+        )
     return result
 
 
-def _resolve_cwd(value: Any, *, base_dir: Path, label: str) -> Path | None:
+def _resolve_cwd(
+    value: Any,
+    *,
+    base_dir: Path,
+    label: str,
+    expand: bool = True,
+) -> Path | None:
     if value is None or value == "":
         return None
     if not isinstance(value, str):
         raise ConfigurationError(f"{label} 必须是字符串")
-    expanded = _expand_env(value.strip(), label=label)
+    text = value.strip()
+    expanded = _expand_env(text, label=label) if expand else text
     if not expanded:
         return None
     path = Path(expanded).expanduser()

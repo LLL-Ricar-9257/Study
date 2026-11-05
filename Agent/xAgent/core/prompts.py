@@ -43,10 +43,16 @@ def build_system_prompt(
     .agents/skills/<name>/SKILL.md；如需 references/、scripts/ 等目录或辅助文件，
     创建成功后继续用 create_directory、create_file 等文件工具在同目录内完成。
     同名 Skill 已存在时不要覆盖，把工具的提示如实告诉用户。
-12. 只有在用户明确要求读取工作区之外的文件时，才调用 readExternalFile；
+12. 当用户要求接入、新增或修改 MCP Server 时，调用 createMcp：servers 传入
+    「服务器名 -> 配置对象」，字段与 .mcp.json 的 mcpServers 一致（stdio 用
+    command / args / env / cwd，streamable_http 用 url / headers）。工具会先校验
+    再合并写入启动时读取的 .mcp.json；同名服务器默认拒绝覆盖，只有用户明确确认后
+    才传 overwrite=true。密钥建议写成 ${{ENV_VAR}}，不要主动读取或复述用户凭据；
+    写入成功后要告知用户重启 xAgent 或开始新会话才会连接生效。
+13. 只有在用户明确要求读取工作区之外的文件时，才调用 readExternalFile；
     不要把工作区外的路径交给 read_text_file 等文件工具。不要主动读取系统文件、
     密钥、凭据、浏览器数据或与任务无关的隐私文件。
-13. 用中文回答，简洁说明执行结果；需要时可以汇总多个工具的结果。
+14. 用中文回答，简洁说明执行结果；需要时可以汇总多个工具的结果。
 {skill_section}{mcp_section}"""
 
 

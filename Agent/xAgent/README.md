@@ -11,13 +11,14 @@
 - **Core / UI 分离**：`core` 不依赖 Textual、Rich，也不读写终端；`tui` 不直接操作文件或调用模型。
 - **事件流驱动**：核心通过 `AgentEvent` 异步流输出文本、工具调用、完成和错误状态；
   Textual、WebSocket、桌面端可以消费同一套事件。
-- **10 个文件工具 + 工作区外只读 + 系统时间工具 + 网页抓取 + 网络搜索 + 本地命令行 + Skill 加载/创建**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
+- **10 个文件工具 + 工作区外只读 + 系统时间工具 + 网页抓取 + 网络搜索 + 本地命令行 + Skill 加载/创建 + MCP 配置写入**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
   获取当前日期、时间、时区和星期，用 `readExternalFile` 读取用户明确指定的
   工作区外纯文本文件（只读），用 `fetchWeb` 抓取网页正文并转换为 Markdown，
   用 `searchweb` 调用百度千帆 AI 搜索获取互联网实时信息，用 `Runcil`
   运行本机已安装的任意 CLI 程序并返回 stdout / stderr / 退出码，用
   `loadSkill` 按需加载 `.agents/skills` 中的 Agent Skill，用 `createSkill`
-  根据自然语言要求生成新的 Skill 骨架。
+  根据自然语言要求生成新的 Skill 骨架，用 `createMcp` 把用户给出的 MCP Server
+  配置校验后合并写入 `.mcp.json`。
 - **MCP Client**：启动时读取当前项目目录下的 `.mcp.json`，连接 **stdio** 和
   **Streamable HTTP** 两种 MCP Server，调用 `list_tools()` 自动发现工具并注册到
   现有 Function Calling 工具集合；工具名带服务器前缀，调用结果（文本、结构化数据、
@@ -69,9 +70,10 @@ xAgent/
 │     ├─ search.py               # 百度千帆 AI 搜索（searchweb）
 │     ├─ runcli.py               # 本地命令行执行（Runcil）
 │     ├─ skills.py               # 按需加载 / 创建 Skill（loadSkill、createSkill）
+│     ├─ mcpconfig.py            # 写入 MCP 配置（createMcp）
 │     ├─ paths.py                # 工作区路径策略与名称校验
 │     ├─ registry.py             # 工具注册、JSON 参数校验、异常隔离
-│     ├─ specs.py                # 工具 JSON Schema 声明（文件 / 网页 / 搜索 / 命令行 / Skill）
+│     ├─ specs.py                # 工具 JSON Schema 声明（文件 / 网页 / 搜索 / 命令行 / Skill / MCP）
 │     └─ types.py                # ToolSpec / ToolResult
 ├─ tui/                          # Textual 表现层
 │  ├─ app.py                     # 布局、输入、事件消费、生命周期
@@ -360,6 +362,50 @@ Agent 的工具调用流程。
 > `.mcp.json` 的 `headers` 可能包含访问令牌；提交到 Git 前请确认其中没有真实密钥，
 > 推荐改用 `${ENV_VAR}` 从环境变量读取。
 
+### 用自然语言写入配置（createMcp）
+
+不必手工编辑 `.mcp.json`：直接告诉模型“帮我接入这个 MCP Server”，模型会调用
+`createMcp` 把配置写进文件。例如：
+
+```json
+{
+  "servers": {
+    "Bazi-MCP": {
+      "type": "streamable_http",
+      "url": "https://mcp.api-inference.modelscope.net/476b45abed7446/mcp"
+    },
+    "local-demo": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["server.py"],
+      "env": {"DEMO_TOKEN": "${DEMO_TOKEN}"}
+    }
+  },
+  "overwrite": false
+}
+```
+
+工具的行为：
+
+1. `servers` 是「服务器名 -> 配置对象」的映射，字段与 `.mcp.json` 的 `mcpServers`
+   完全一致（也可以直接传一段 JSON 字符串）；一次可写入多个服务器。
+2. 默认写入 xAgent 启动时**会读取的那份文件**：`--mcp-config` /
+   `XAGENT_MCP_CONFIG` 指定的路径，否则是启动目录下的 `.mcp.json`；
+   也可以用 `path` 指定其他 `.json` 文件（相对路径以工作区为基准）。
+3. **先校验再落盘**：每个服务器都用运行期同一套解析规则
+   （`core.mcp.config.parse_server_entry()`）检查传输类型、`command` / `url`、
+   `args` / `env` / `headers` 的类型和 URL 合法性。任一服务器不合法时不写文件，
+   已有内容保持原样。
+4. **合并写入**：文件里其他服务器和其他顶层字段（例如自定义注释字段）原样保留；
+   写入采用「临时文件 + `os.replace`」，不会出现半截 JSON。
+5. **不静默覆盖**：同名服务器已存在时默认拒绝写入并返回提示，需要用户确认后
+   再以 `overwrite=true` 调用；文件不是合法 JSON 时也会拒绝写入并提示先手工修正。
+6. **不回显密钥**：工具结果只报告服务器名、传输方式和端点，不打印 `env` /
+   `headers` 的值；`${VAR}` / `${VAR:-默认值}` 在写入时保持原样，启动时再展开，
+   因此不需要相关环境变量当前已存在。
+7. 新配置**不会立刻生效**：需要重启 xAgent 或开始新会话，MCP Client 才会连接服务器、
+   发现工具并注册为 Function Calling 工具。
+
 ## 读取工作区外文件（readExternalFile）
 
 普通文件工具受工作区沙箱限制，只能访问 `--workspace` 内的文件。当用户明确要求
@@ -597,7 +643,7 @@ core.agent ──► core.ports.ChatModel  ◄── core.llm.openai_chat (适�
 .\.venv\Scripts\ruff.exe check core tui tests
 ```
 
-当前：**140 个测试通过**（另有 1 个真实 MCP Server 测试默认跳过），Ruff 无告警。
+当前：**167 个测试通过**（另有 1 个真实 MCP Server 测试默认跳过），Ruff 无告警。
 
 真实 MCP Server 测试（需要联网）默认不运行，手动开启方式：
 

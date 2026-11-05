@@ -1,5 +1,5 @@
-"""文件工具、工作区外读取、系统时间、网页抓取、网络搜索、本地命令行与
-Skill 加载/创建的 JSON Schema 声明。
+"""文件工具、工作区外读取、系统时间、网页抓取、网络搜索、本地命令行、
+Skill 加载/创建以及 MCP 配置写入的 JSON Schema 声明。
 
 声明与实现分离：新增/调整工具描述不会影响文件操作实现。
 """
@@ -416,6 +416,55 @@ SKILL_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ),
 )
 
+MCP_CONFIG_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name="createMcp",
+        description=(
+            "把用户提供的 MCP Server 配置写入 .mcp.json（默认就是 xAgent 启动时读取的"
+            "那份文件，即 --mcp-config / XAGENT_MCP_CONFIG 指定的路径或启动目录下的"
+            ".mcp.json）。当用户要求接入、新增或修改 MCP Server / MCP 工具时调用。"
+            "servers 是「服务器名 -> 配置对象」的 JSON 对象，字段与 .mcp.json 的 "
+            "mcpServers 一致：stdio 用 command / args / env / cwd，"
+            "streamable_http 用 url / headers，type 可省略（按 command / url 推断）。"
+            "工具按 xAgent 的解析规则先校验再原子写入，校验失败不会改动文件；"
+            "默认与文件中已有的其他服务器合并，同名服务器在 overwrite=false 时拒绝覆盖，"
+            "需要覆盖时先向用户确认再传 overwrite=true。"
+            "密钥建议写成 ${ENV_VAR}；工具结果不回显 env / headers 的值。"
+            "新配置需要重启 xAgent 或开始新会话后才会连接生效。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "servers": {
+                    "type": "object",
+                    "description": (
+                        "服务器名 -> 配置对象 的映射，例如 "
+                        '{"demo": {"type": "stdio", "command": "python",'
+                        ' "args": ["server.py"]}}'
+                    ),
+                    "additionalProperties": {"type": "object"},
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": (
+                        "同名服务器已存在时是否覆盖，默认 false（拒绝写入并提示）"
+                    ),
+                    "default": False,
+                },
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "可选，要写入的配置文件路径；相对路径以工作区为基准。"
+                        "省略时写入 xAgent 启动时读取的 .mcp.json"
+                    ),
+                },
+            },
+            "required": ["servers"],
+            "additionalProperties": False,
+        },
+    ),
+)
+
 ALL_TOOL_SPECS = (
     FILE_TOOL_SPECS
     + EXTERNAL_TOOL_SPECS
@@ -423,4 +472,5 @@ ALL_TOOL_SPECS = (
     + SEARCH_TOOL_SPECS
     + RUNCLI_TOOL_SPECS
     + SKILL_TOOL_SPECS
+    + MCP_CONFIG_TOOL_SPECS
 )

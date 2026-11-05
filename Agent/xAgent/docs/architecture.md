@@ -131,8 +131,17 @@ xAgent 自带目录（`core` 包上一级的 `.agents/skills`，扫描根由
   同名目录（含大小写差异和目录别名）一律拒绝覆盖。工具不创建 `references/`、
   `scripts/` 等附加目录，模型需要时继续调用文件工具。
 - `specs.FILE_TOOL_SPECS` / `specs.EXTERNAL_TOOL_SPECS` / `specs.WEB_TOOL_SPECS` /
-  `specs.SEARCH_TOOL_SPECS` / `specs.RUNCLI_TOOL_SPECS` / `specs.SKILL_TOOL_SPECS`：
+  `specs.SEARCH_TOOL_SPECS` / `specs.RUNCLI_TOOL_SPECS` / `specs.SKILL_TOOL_SPECS` /
+  `specs.MCP_CONFIG_TOOL_SPECS`：
   工具 JSON Schema，与实现解耦；`ALL_TOOL_SPECS` 是注册时使用的完整声明。
+- `mcpconfig.McpConfigToolset`：`createMcp` 的实现，把用户给出的 MCP Server 配置
+  写进 `.mcp.json`。默认目标是 `--mcp-config` / `XAGENT_MCP_CONFIG` 指定的路径，
+  否则是启动目录下的 `.mcp.json`；也可以用 `path` 指向其他 `.json` 文件。
+  写入前用 `core.mcp.config.parse_server_entry(..., expand_env=False)` 做与运行期同一套
+  结构校验（只校验类型/传输/URL，不要求 `${VAR}` 当前已设置），校验失败不产生任何改动；
+  合并写入保留文件中其他服务器和其他顶层字段，采用临时文件 + `os.replace` 原子替换，
+  回读校验服务器列表；同名服务器默认拒绝覆盖，需显式 `overwrite=true`。
+  结果只报告服务器名、传输方式与端点，不回显 `env` / `headers` 的值。
 - `registry.ToolRegistry`：校验 JSON 参数、绑定签名、隔离异常。
   工具失败被转换为 `ToolResult(ok=False)`，作为 tool 消息回传给模型，
   不会把异常抛到 UI。
@@ -234,7 +243,8 @@ TUI 启动时会把 `FileAgent.system_prompt` 渲染为可折叠的 `SystemPromp
 
 不需要改代码：在启动目录的 `.mcp.json`（或 `--mcp-config` 指定的文件）中添加
 `mcpServers` 条目，重启 xAgent 后即可在工具列表中看到带服务器前缀的工具。
-如果只想接入一次，也可以只保留 `core.mcp` 的公共 API：
+也可以让模型调用 `createMcp`，用自然语言描述连接信息，由工具校验后合并写入
+同一份配置文件。如果只想接入一次，也可以只保留 `core.mcp` 的公共 API：
 
 ```python
 from core import McpClientManager, McpSettings, ToolRegistry
@@ -297,6 +307,10 @@ Skill 是内容扩展，通常不需要改代码：
 - **MCP**：连接/发现超时与单次调用超时均可配置；单个服务器失败只影响其自身工具，
   状态写入系统提示词和 TUI 启动提示。stdio 的 stderr 重定向到临时文件，不污染 TUI；
   工具结果超过上限时截断，`isError` 与协议异常都转为 `ToolError` 回传模型。
+- **MCP 配置写入**：`createMcp` 先校验后写入，校验失败或现有文件不是合法 JSON 时
+  不产生任何改动；写入用临时文件 + `os.replace`，合并时保留其他服务器与其他顶层字段；
+  同名服务器默认拒绝覆盖，需要显式 `overwrite=true`；结果不回显 `env` / `headers`
+  的值，`${VAR}` 保持原样留给启动时展开。
 - **路径安全**：所有相对路径基于工作区；解析后必须仍位于工作区内；
   根目录不可删除或重命名。唯一例外是只读的 `readExternalFile`，它只在用户
   明确要求时读取工作区外纯文本，不提供写操作，也不改变其他工具的工作区校验。
@@ -321,4 +335,5 @@ UI 会展示每个工具的执行结果。
 - `tests/test_config.py`：配置优先级、可选工具轮数上限（留空/0 表示不限制）、相对工作区、Key 隐藏、错误配置。
 - `tests/test_architecture.py`：core 不得依赖 Textual/Rich，事件契约公开。
 - `tests/test_mcp.py`：`.mcp.json` 解析（两种传输、环境变量展开、非法类型/字段）、工具前缀与冲突处理、Schema 清洗、文本/结构化/错误/截断结果格式化；用临时 stdio MCP Server 做端到端连接、工具注册、调用转发、server 错误与单服务器故障隔离；另有一个通过 `XAGENT_MCP_LIVE_TEST=1` 开启的真实 Streamable HTTP 测试。
+- `tests/test_mcp_config_tool.py`：`createMcp` 的新建/合并写入、保留其他顶层字段、旧 `mcp_servers` 键、覆盖保护与 `overwrite=true`、非法服务器配置与损坏 JSON 时零改动、空/重名服务器名、`${VAR}` 原样保留、不回显密钥、`path`/`config_path` 解析、写入后由运行期解析器与 `ToolRegistry` 正常读取，以及 `build_agent` 的注册与系统提示词注入。
 - `tests/test_tui.py`：Textual 启动、流式回复、取消回滚、工具调用卡片默认折叠、系统剪贴板粘贴、字符宽度归一化、系统提示词折叠面板和无边框样式约束。

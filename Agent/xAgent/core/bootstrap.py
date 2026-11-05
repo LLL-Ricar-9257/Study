@@ -1,5 +1,5 @@
 """组合根：把配置、LLM 适配器、文件工具、网页工具、搜索工具、命令行工具、
-Skill 加载/创建以及 MCP Server 工具组装成 Agent。
+Skill 加载/创建、MCP 配置写入以及 MCP Server 工具组装成 Agent。
 
 所有 UI（TUI / Web / Desktop）都调用同一个 build_agent，避免重复业务配置。
 """
@@ -17,6 +17,7 @@ from .prompts import build_system_prompt
 from .skills import SkillsCatalog, bundled_root
 from .tools.external import ExternalFileToolset
 from .tools.filesystem import FileToolset
+from .tools.mcpconfig import McpConfigToolset
 from .tools.registry import ToolRegistry
 from .tools.runcli import RunCliToolset
 from .tools.search import SearchToolset
@@ -44,7 +45,8 @@ def build_agent(
     传空序列可禁用（便于测试构造隔离环境）。
 
     ``mcp_settings`` 覆盖 MCP 开关与超时；默认读取 ``XAGENT_MCP_*`` 环境变量。
-    项目目录没有 ``.mcp.json`` 时不会创建任何 MCP 连接。
+    项目目录没有 ``.mcp.json`` 时不会创建任何 MCP 连接。``createMcp`` 也以
+    ``mcp_settings.config_path`` 为目标，保证写入的就是下次启动会读取的那份文件。
     """
     root = (
         Path.cwd().resolve()
@@ -58,6 +60,7 @@ def build_agent(
         bundled_roots=bundled,
     )
 
+    effective_mcp = mcp_settings or McpSettings.from_environment()
     file_tools = FileToolset(config.workspace, limits=config.limits)
     external_tools = ExternalFileToolset(limits=config.limits)
     web_tools = WebToolset(limits=config.limits)
@@ -69,6 +72,12 @@ def build_agent(
         workspace_root=config.workspace,
         limits=config.limits,
     )
+    mcp_config_tools = McpConfigToolset(
+        project_root=root,
+        workspace_root=config.workspace,
+        config_path=effective_mcp.config_path,
+        limits=config.limits,
+    )
     handlers = (
         file_tools.registry_handlers()
         | external_tools.registry_handlers()
@@ -76,12 +85,13 @@ def build_agent(
         | search_tools.registry_handlers()
         | runcli_tools.registry_handlers()
         | skill_tools.registry_handlers()
+        | mcp_config_tools.registry_handlers()
     )
     specs: list[ToolSpec] = list(ALL_TOOL_SPECS)
 
     mcp_manager = McpClientManager.from_project(
         root,
-        settings=mcp_settings or McpSettings.from_environment(),
+        settings=effective_mcp,
         reserved_names={spec.name for spec in ALL_TOOL_SPECS},
     )
     cleanup = []
