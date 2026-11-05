@@ -11,8 +11,11 @@ from .skills import SkillInfo
 def build_system_prompt(
     workspace: Path,
     skills: Iterable[SkillInfo] | None = None,
+    *,
+    mcp_lines: Iterable[str] | None = None,
 ) -> str:
     skill_section = _build_skill_section(tuple(skills or ()))
+    mcp_section = _build_mcp_section(tuple(mcp_lines or ()))
     return f"""你是一个本地文件管理助手，当前工作区是：{workspace}
 
 请遵守以下规则：
@@ -44,7 +47,24 @@ def build_system_prompt(
     不要把工作区外的路径交给 read_text_file 等文件工具。不要主动读取系统文件、
     密钥、凭据、浏览器数据或与任务无关的隐私文件。
 13. 用中文回答，简洁说明执行结果；需要时可以汇总多个工具的结果。
-{skill_section}"""
+{skill_section}{mcp_section}"""
+
+
+def _build_mcp_section(lines: tuple[str, ...]) -> str:
+    if not lines:
+        return ""
+
+    body = ["", "外部 MCP Server 提供的工具（与本地工具一样通过 function calling 调用）："]
+    body.extend(lines)
+    body.extend(
+        (
+            "MCP 工具名以「服务器名__工具名」的形式暴露，请按工具描述选择并使用；"
+            "某个 MCP Server 连接失败时，它的工具不可用，但本地工具仍可正常使用。"
+            "MCP 工具返回错误时，把服务器给出的错误信息如实告诉用户，不要编造结果；"
+            "不要因为 MCP 工具不可用而放弃其他可用工具。",
+        )
+    )
+    return "\n".join(body) + "\n"
 
 
 def _build_skill_section(skills: tuple[SkillInfo, ...]) -> str:

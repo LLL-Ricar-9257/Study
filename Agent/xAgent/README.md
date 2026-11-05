@@ -18,6 +18,10 @@
   运行本机已安装的任意 CLI 程序并返回 stdout / stderr / 退出码，用
   `loadSkill` 按需加载 `.agents/skills` 中的 Agent Skill，用 `createSkill`
   根据自然语言要求生成新的 Skill 骨架。
+- **MCP Client**：启动时读取当前项目目录下的 `.mcp.json`，连接 **stdio** 和
+  **Streamable HTTP** 两种 MCP Server，调用 `list_tools()` 自动发现工具并注册到
+  现有 Function Calling 工具集合；工具名带服务器前缀，调用结果（文本、结构化数据、
+  错误）原样回传给模型。单个服务器不可用时只提示错误，不影响本地工具和其他服务器。
 - **工作区沙箱**：普通文件操作统一经过 `Workspace.resolve()` 校验，禁止访问工作区
   之外的文件；只有显式的只读工具 `readExternalFile` 可以在用户明确要求时读取
   工作区外的纯文本文件。
@@ -49,6 +53,10 @@ xAgent/
 │  ├─ errors.py                  # 领域异常
 │  ├─ events.py                  # UI 无关的领域事件（显示协议）
 │  ├─ models.py                  # 供应商无关的消息/分片结构
+│  ├─ mcp/
+│  │  ├─ config.py               # .mcp.json 解析与环境变量展开
+│  │  ├─ manager.py              # MCP 连接、工具发现、调用转发
+│  │  └─ tools.py                # 工具命名映射与结果格式化
 │  ├─ ports.py                   # ChatModel 抽象端口
 │  ├─ prompts.py                 # 系统提示词（含 Skill 列表）
 │  ├─ skills.py                  # Agent Skills 发现与 Frontmatter 解析
@@ -81,6 +89,7 @@ xAgent/
 │  └─ tui-preview.png
 ├─ config.example.ini
 ├─ config.ini                    # 本机真实配置，已被 .gitignore 忽略
+├─ .mcp.json                     # MCP Server 连接配置（可选，置于启动目录）
 ├─ pyproject.toml
 └─ README.md
 ```
@@ -100,6 +109,8 @@ py -3.11 -m venv .venv
 Copy-Item config.example.ini config.ini
 # 编辑 config.ini，填入 [llm] api_key
 # 如需联网搜索，再填入 [search] baidu_qianfan_api_key
+
+# 可选：在启动 xAgent 的目录创建 .mcp.json（见“外部 MCP Server”一节）
 ```
 
 启动：
@@ -108,9 +119,11 @@ Copy-Item config.example.ini config.ini
 # 工作区默认为当前目录
 .\.venv\Scripts\xagent.exe
 
-# 或显式指定工作区 / 配置文件
+# 或显式指定工作区 / 配置文件 / MCP 配置
 .\.venv\Scripts\xagent.exe --workspace E:\work\my-project
 .\.venv\Scripts\xagent.exe --config .\config.ini --workspace .\demo
+.\.venv\Scripts\xagent.exe --mcp-config E:\work\LLM\.mcp.json
+.\.venv\Scripts\xagent.exe --no-mcp
 
 # 也可以模块方式启动
 .\.venv\Scripts\python.exe -m tui -w E:\work\my-project
@@ -160,6 +173,11 @@ timeout_seconds = 20
 | `XAGENT_SEARCH_ENDPOINT` | 自定义搜索接口地址 |
 | `XAGENT_CONSOLE_FONT` | cmd.exe 自动切换的控制台字体，默认 `黑体` |
 | `XAGENT_NO_FONT_SETUP` | 设为 `1` 时禁止自动修改控制台字体 |
+| `XAGENT_MCP_ENABLED` | 设为 `0` / `false` 时本次启动不连接 MCP Server |
+| `XAGENT_MCP_CONFIG` | MCP 配置文件路径，默认 `<启动目录>/.mcp.json` |
+| `XAGENT_MCP_CONNECT_TIMEOUT` | 单个 MCP Server 连接/工具发现超时秒数，默认 20 |
+| `XAGENT_MCP_CALL_TIMEOUT` | 单次 MCP 工具调用超时秒数，默认 60 |
+| `XAGENT_MCP_MAX_RESULT_CHARS` | 单个 MCP 工具结果保留的最大字符数，默认 30000 |
 
 优先级：命令行参数 > 环境变量 > `config.ini` > 默认值。API Key 只保存在核心配置对象中，
 `LLMSettings` 的 `repr` 已隐藏该字段。
@@ -241,6 +259,106 @@ Function Calling 的结果向模型返回可读的错误信息，由模型转告
 
 > `dir`、`cd`、`echo` 等由 Shell 内建提供的命令不是独立可执行程序，不能直接运行；
 > 请改用对应的独立程序，或显式调用 `cmd /c ...`、`powershell -Command ...`。
+
+## 外部 MCP Server（MCP Client）
+
+xAgent 实现了 MCP Client：启动时连接外部 MCP Server，把服务器提供的工具注册为
+普通 Function Calling 工具，与 `Runcil`、`fetchWeb`、`loadSkill` 等本地工具统一参与
+Agent 的工具调用流程。
+
+### 配置文件
+
+启动时读取**启动目录**（当前项目目录，不是 xAgent 源码目录）下的 `.mcp.json`。
+可以用 `--mcp-config FILE` 或环境变量 `XAGENT_MCP_CONFIG` 指定其他位置，
+用 `--no-mcp` 或 `XAGENT_MCP_ENABLED=0` 临时关闭。项目没有该文件时 xAgent 正常启动，
+只是没有 MCP 工具。
+
+支持 `stdio`（本地子进程）和 `streamable_http`（远程 HTTP）两种传输：
+
+```json
+{
+  "mcpServers": {
+    "local-demo": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["server.py"],
+      "env": {"DEMO_TOKEN": "${DEMO_TOKEN}"},
+      "cwd": "."
+    },
+    "remote-demo": {
+      "type": "streamable_http",
+      "url": "https://example.com/mcp",
+      "headers": {"Authorization": "Bearer ${DEMO_API_KEY}"}
+    }
+  }
+}
+```
+
+| 字段 | 传输 | 说明 |
+| --- | --- | --- |
+| `type` | 两种 | `stdio` 或 `streamable_http`；省略时按 `command` / `url` 自动推断 |
+| `command` | stdio | 必填，可执行程序名或完整路径 |
+| `args` | stdio | 字符串数组，按顺序传给程序 |
+| `env` | stdio | 追加在继承的系统环境变量之上的键值对 |
+| `cwd` | stdio | 子进程工作目录，相对 `.mcp.json` 所在目录；默认使用启动目录 |
+| `url` | streamable_http | 必填，必须是 `http://` 或 `https://` 地址 |
+| `headers` | streamable_http | 附加 HTTP 请求头，例如 `Authorization` |
+
+补充规则：
+
+1. 同时兼容 `streamable-http`、`http` 等常见 `type` 写法；`sse` 暂不支持，
+   会输出明确提示并跳过该服务器；
+2. 字符串值支持 `${VAR}` 和 `${VAR:-默认值}` 环境变量展开，便于把访问令牌放在
+   环境变量中；引用了未设置的变量时**只跳过当前服务器**，其余服务器继续加载；
+3. 服务器配置中的 `env`、`headers` 不会被写入日志或 `repr`。
+
+### 工具发现、命名与调用
+
+1. 连接成功后调用 MCP `list_tools()`，读取每个工具的 `name`、`description` 和
+   `inputSchema`；
+2. 对外工具名为 `<服务器名>__<工具名>`，仅保留 `[A-Za-z0-9_-]` 字符并限制在
+   64 字符以内；清理后重名时追加 `_2`、`_3`……，本地工具名优先，MCP 工具不会覆盖
+   或遮蔽 `Runcil`、`fetchWeb` 等内置工具；
+3. 管理器内部维护 **对外名称 → (MCP Server, 原始工具名)** 的映射。模型发起调用后，
+   统一走 `ToolRegistry.execute()` → 同步 handler → MCP 后台事件循环 →
+   `ClientSession.call_tool()`，与本地工具完全相同的 Function Calling 流程；
+4. 结果处理：
+   - 文本内容按顺序拼接后回传；
+   - 图片、音频、嵌入资源只保留简要占位说明，不会把 base64 写进上下文；
+   - `structuredContent` 以 JSON 追加，便于模型读取结构化字段；
+   - `isError=true` 或调用异常会转换为工具失败，错误信息原样回传给模型；
+   - 超过 `XAGENT_MCP_MAX_RESULT_CHARS`（默认 30000 字符）时截断并标注。
+
+### 启动提示与错误隔离
+
+- TUI 启动时在会话区显示 MCP 配置路径、每个服务器的连接结果（含工具数量）或失败
+  原因；系统提示词（`/system`）中也会包含同样的状态，让模型知道哪些服务器不可用。
+- 某个服务器连接失败、超时或配置错误时，只影响它自己的工具；本地工具和其他
+  MCP 服务器仍可正常使用。
+- stdio 服务器的 stderr 被重定向到临时日志，连接失败时截取末尾加入错误信息，
+  不会直接输出到 TUI 造成界面错乱。
+- 退出（`/quit`、`Ctrl+Q`、关闭窗口）时关闭 MCP 会话并终止 stdio 子进程。
+
+### 使用示例
+
+在启动 xAgent 的目录创建 `.mcp.json`，例如本项目提供的 Bazi-MCP 配置：
+
+```json
+{
+  "mcpServers": {
+    "Bazi-MCP": {
+      "type": "streamable_http",
+      "url": "https://mcp.api-inference.modelscope.net/476b45abed7446/mcp"
+    }
+  }
+}
+```
+
+启动后询问“用八字 MCP 查一下 2024-02-10 的农历信息”，模型会调用
+`Bazi-MCP__getChineseCalendar`，把工具返回的文本/JSON 结果再组织成回答。
+
+> `.mcp.json` 的 `headers` 可能包含访问令牌；提交到 Git 前请确认其中没有真实密钥，
+> 推荐改用 `${ENV_VAR}` 从环境变量读取。
 
 ## 读取工作区外文件（readExternalFile）
 
@@ -479,7 +597,19 @@ core.agent ──► core.ports.ChatModel  ◄── core.llm.openai_chat (适�
 .\.venv\Scripts\ruff.exe check core tui tests
 ```
 
-当前：**84 个测试通过**，Ruff 无告警。
+当前：**140 个测试通过**（另有 1 个真实 MCP Server 测试默认跳过），Ruff 无告警。
+
+真实 MCP Server 测试（需要联网）默认不运行，手动开启方式：
+
+```powershell
+$env:XAGENT_MCP_LIVE_TEST = "1"
+# 可选：指定要使用的 MCP 配置，默认读取仓库上一级项目的 .mcp.json
+$env:XAGENT_MCP_CONFIG = "E:\work\LLM\.mcp.json"
+.\.venv\Scripts\python.exe -m pytest tests\test_mcp.py -q
+```
+
+`tests/test_mcp.py` 还包含一个使用临时 stdio MCP Server 的端到端测试，覆盖连接、
+`list_tools()`、工具注册、参数转发、结构化结果、server 错误和单服务器故障隔离。
 
 ## 从单文件版迁移
 

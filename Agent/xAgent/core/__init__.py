@@ -27,6 +27,14 @@ from .events import (
     TurnFailed,
     TurnStarted,
 )
+from .mcp import (
+    McpClientManager,
+    McpConfig,
+    McpServerConfig,
+    McpServerSummary,
+    McpSettings,
+    load_mcp_config,
+)
 from .models import ChatChunk, ChatMessage, ToolCall, ToolCallDelta
 from .skills import SkillInfo, SkillsCatalog
 from .tools import TOOL_COUNT
@@ -48,6 +56,11 @@ __all__ = [
     "ExternalFileToolset",
     "FileAgent",
     "LLMSettings",
+    "McpClientManager",
+    "McpConfig",
+    "McpServerConfig",
+    "McpServerSummary",
+    "McpSettings",
     "ModelCallError",
     "TOOL_COUNT",
     "SearchSettings",
@@ -73,4 +86,5 @@ __all__ = [
     "__version__",
     "build_agent",
     "load_config",
+    "load_mcp_config",
 ]

@@ -10,3 +10,8 @@ pytest-of-*/
 config.ini
 try/
 *.log
+
+# 本机演示产物与生成报告（含个人数据，不入库）
+office/
+tianji_report/
+logs/

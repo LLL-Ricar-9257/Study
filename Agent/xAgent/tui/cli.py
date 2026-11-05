@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 
 from core import (
     ConfigurationError,
+    McpSettings,
     XAgentError,
     __version__,
     build_agent,
@@ -33,6 +35,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="配置文件路径，默认为项目根目录的 config.ini",
     )
     parser.add_argument(
+        "--mcp-config",
+        metavar="FILE",
+        help="MCP 配置文件路径，默认为启动目录下的 .mcp.json",
+    )
+    parser.add_argument(
+        "--no-mcp",
+        action="store_true",
+        help="本次启动不连接任何 MCP Server",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"xAgent {__version__}",
@@ -52,8 +64,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"启动失败：{exc}", file=sys.stderr)
         return 2
 
+    mcp_settings = McpSettings.from_environment()
+    if args.mcp_config:
+        mcp_settings = replace(mcp_settings, config_path=args.mcp_config)
+    if args.no_mcp:
+        mcp_settings = replace(mcp_settings, enabled=False)
+
     try:
-        agent = build_agent(config)
+        agent = build_agent(config, mcp_settings=mcp_settings)
     except Exception as exc:
         print(f"初始化 Agent 失败：{exc}", file=sys.stderr)
         return 2

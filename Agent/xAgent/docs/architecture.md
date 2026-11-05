@@ -137,6 +137,24 @@ xAgent 自带目录（`core` 包上一级的 `.agents/skills`，扫描根由
   工具失败被转换为 `ToolResult(ok=False)`，作为 tool 消息回传给模型，
   不会把异常抛到 UI。
 
+### `core.mcp`
+
+MCP Client 独立成包，避免把传输细节混入 `core.tools`：
+
+- `config.load_mcp_config()`：读取启动目录下的 `.mcp.json`，校验 `stdio` 与
+  `streamable_http` 配置，支持 `${VAR}` / `${VAR:-默认值}` 展开；单个服务器错误写入
+  `issues` 并跳过，不影响其他服务器。
+- `manager.McpClientManager`：在专用后台线程中运行 asyncio 事件循环，为每个服务器持有
+  一个 `ClientSession`（stdio 子进程或 Streamable HTTP 会话），启动时执行
+  `initialize()` + `list_tools()`；工具调用通过 `run_coroutine_threadsafe()` 转发到该循环，
+  同步等待 `call_tool()` 结果。这样同步的 `ToolRegistry` handler 与现有
+  `asyncio.to_thread` 执行模型都不需要改动。
+- `tools.build_bindings()`：把 MCP Tool 转换为 `ToolSpec`，生成
+  `<server>__<tool>` 唯一名称并维护「对外名称 → 服务器 / 原始工具名」映射；
+  `format_result()` 处理文本内容、结构化数据、图片/资源占位、错误标记和截断。
+- 连接失败只记录在 `summaries` / `issues`；`build_agent` 把它们写入系统提示词和
+  `FileAgent.startup_notices`。`close()` 通过 `FileAgent.aclose()` 的 cleanup 列表统一调用。
+
 ### `core.llm.openai_chat.OpenAIChatModel`
 
 唯一接触 `openai` SDK 的模块。它把 OpenAI 的流式 chunk 转成
@@ -212,6 +230,23 @@ TUI 启动时会把 `FileAgent.system_prompt` 渲染为可折叠的 `SystemPromp
 
 `ToolRegistry` 会在构造时检查声明和实现是否一一对应。
 
+### 新增 MCP Server
+
+不需要改代码：在启动目录的 `.mcp.json`（或 `--mcp-config` 指定的文件）中添加
+`mcpServers` 条目，重启 xAgent 后即可在工具列表中看到带服务器前缀的工具。
+如果只想接入一次，也可以只保留 `core.mcp` 的公共 API：
+
+```python
+from core import McpClientManager, McpSettings, ToolRegistry
+
+manager = McpClientManager.from_project("/path/to/project", settings=McpSettings())
+assert manager is not None
+manager.start()
+registry = ToolRegistry(manager.registry_handlers(), manager.tool_specs())
+...
+manager.close()
+```
+
 ### 新增 Skill
 
 Skill 是内容扩展，通常不需要改代码：
@@ -259,6 +294,9 @@ Skill 是内容扩展，通常不需要改代码：
 - **本地命令行**：程序名与参数始终组成参数列表并设置 `shell=False`；标准输入置空，
   默认 30 秒超时，stdout/stderr 超长时截断并标注。本阶段没有白名单、黑名单或审批，
   命令以当前用户权限执行，仅适用于受控教学环境。
+- **MCP**：连接/发现超时与单次调用超时均可配置；单个服务器失败只影响其自身工具，
+  状态写入系统提示词和 TUI 启动提示。stdio 的 stderr 重定向到临时文件，不污染 TUI；
+  工具结果超过上限时截断，`isError` 与协议异常都转为 `ToolError` 回传模型。
 - **路径安全**：所有相对路径基于工作区；解析后必须仍位于工作区内；
   根目录不可删除或重命名。唯一例外是只读的 `readExternalFile`，它只在用户
   明确要求时读取工作区外纯文本，不提供写操作，也不改变其他工具的工作区校验。
@@ -282,4 +320,5 @@ UI 会展示每个工具的执行结果。
 - `tests/test_agent.py`：工具循环、无上限多轮工具调用、可选轮数上限、模型失败回滚、并发拒绝、关闭。
 - `tests/test_config.py`：配置优先级、可选工具轮数上限（留空/0 表示不限制）、相对工作区、Key 隐藏、错误配置。
 - `tests/test_architecture.py`：core 不得依赖 Textual/Rich，事件契约公开。
+- `tests/test_mcp.py`：`.mcp.json` 解析（两种传输、环境变量展开、非法类型/字段）、工具前缀与冲突处理、Schema 清洗、文本/结构化/错误/截断结果格式化；用临时 stdio MCP Server 做端到端连接、工具注册、调用转发、server 错误与单服务器故障隔离；另有一个通过 `XAGENT_MCP_LIVE_TEST=1` 开启的真实 Streamable HTTP 测试。
 - `tests/test_tui.py`：Textual 启动、流式回复、取消回滚、工具调用卡片默认折叠、系统剪贴板粘贴、字符宽度归一化、系统提示词折叠面板和无边框样式约束。

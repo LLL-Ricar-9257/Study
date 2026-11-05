@@ -7,9 +7,11 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass
+from typing import Any
 
 from .errors import AgentBusyError
 from .events import (
@@ -25,6 +27,7 @@ from .events import (
 from .models import ChatChunk, ChatMessage, ToolCall
 from .ports import ChatModel
 from .tools.registry import ToolRegistry
+from .tools.types import ToolSpec
 
 
 @dataclass(slots=True)
@@ -51,11 +54,17 @@ class FileAgent:
         tools: ToolRegistry,
         system_prompt: str,
         max_tool_rounds: int | None = None,
+        startup_notices: Iterable[str] | None = None,
+        cleanup: Iterable[Callable[[], Any]] | None = None,
     ) -> None:
         """创建会话。
 
         ``max_tool_rounds`` 为 ``None`` 或 0 时不限制单轮对话的工具调用轮数，
         直到模型不再请求工具或用户取消；显式传入正整数时才启用上限。
+
+        ``startup_notices`` 是启动阶段的连接状态/错误提示，供 UI 展示；
+        ``cleanup`` 是不属于模型端口的可关闭资源（例如 MCP 客户端管理器），
+        ``aclose()`` 时依次释放，单个释放失败不会影响其他资源。
         """
         if max_tool_rounds is not None:
             if max_tool_rounds < 0:
@@ -68,6 +77,8 @@ class FileAgent:
         self._tools = tools
         self._system_prompt = system_prompt
         self._max_tool_rounds = max_tool_rounds
+        self._startup_notices = tuple(startup_notices or ())
+        self._cleanup = tuple(cleanup or ())
         self._messages: list[ChatMessage] = [ChatMessage.system(system_prompt)]
         self._lock = asyncio.Lock()
 
@@ -80,6 +91,16 @@ class FileAgent:
     def system_prompt(self) -> str:
         """本会话构造时写入 system 消息的提示词，供 UI 运行时展示。"""
         return self._system_prompt
+
+    @property
+    def startup_notices(self) -> tuple[str, ...]:
+        """启动阶段的连接状态或非致命错误，供 UI 在会话区提示用户。"""
+        return self._startup_notices
+
+    @property
+    def tool_specs(self) -> tuple[ToolSpec, ...]:
+        """本轮会话可用的全部工具声明（含本地工具与 MCP 工具）。"""
+        return self._tools.specs
 
     def clear(self) -> None:
         """清空对话历史，保留 system 提示。忙碌时拒绝操作。"""
@@ -127,6 +148,14 @@ class FileAgent:
         close = getattr(self._model, "aclose", None)
         if callable(close):
             await close()
+        for cleaner in self._cleanup:
+            try:
+                outcome = cleaner()
+                if inspect.isawaitable(outcome):
+                    await outcome
+            except Exception:
+                # 退出阶段不阻塞、不打断其他资源的释放。
+                continue
 
     async def _run_turn(self) -> AsyncIterator[AgentEvent]:
         round_index = 0
