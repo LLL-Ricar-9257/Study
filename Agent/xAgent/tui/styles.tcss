@@ -46,6 +46,46 @@ Header {
     scrollbar-size-vertical: 1;
 }
 
+/* 输入 / 时弹出的命令菜单：紧贴 composer 上方，不使用边框 */
+#slash-menu {
+    display: none;
+    height: auto;
+    max-height: 12;
+    margin: 0 2;
+    padding: 0 1;
+    background: #17121f;
+}
+
+.slash-title {
+    height: 1;
+    color: #776b83;
+    padding: 0 1;
+}
+
+#slash-options {
+    height: auto;
+    max-height: 10;
+    background: transparent;
+    scrollbar-size-vertical: 1;
+}
+
+#slash-options > .option-list--option {
+    background: transparent;
+    color: #e8dff0;
+    padding: 0 1;
+}
+
+#slash-options > .option-list--option-highlighted {
+    background: transparent;
+    color: #ffd4b8;
+    text-style: bold;
+}
+
+#slash-options > .option-list--option-hover {
+    background: transparent;
+    color: #b8e6d0;
+}
+
 /* 底部 composer：无边框、透明输入区 */
 #composer {
     height: 3;
@@ -94,6 +134,14 @@ Input > .input--cursor {
 
 #prompt > .input--placeholder {
     color: #776b83;
+}
+
+#context-bar {
+    height: 1;
+    padding: 0 2;
+    background: #120f18;
+    color: #776b83;
+    overflow: hidden;
 }
 
 #composer-footer {
@@ -159,6 +207,134 @@ Input > .input--cursor {
 MarkdownTableContent {
     keyline: none;
 }
+
+/* 上下文压缩对照面板：两栏、可滚动、Esc / 关闭按钮退出 */
+CompactionPanel {
+    align: center middle;
+    background: #0b0710 75%;
+}
+
+#compact-dialog {
+    width: 92%;
+    height: 88%;
+    padding: 1 2;
+    background: #17121f;
+    border: none;
+}
+
+#compact-title {
+    height: auto;
+    padding: 0 1 1 1;
+    color: #f6eef8;
+}
+
+#compact-columns {
+    height: 1fr;
+}
+
+.compact-pane {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 1;
+}
+
+.compact-pane-title {
+    height: 1;
+    color: #ffd4b8;
+    text-style: bold;
+}
+
+.compact-scroll {
+    height: 1fr;
+    background: #120f18;
+    scrollbar-size-vertical: 1;
+}
+
+.compact-body {
+    height: auto;
+    padding: 0 1;
+    color: #e8dff0;
+}
+
+#compact-actions {
+    height: 3;
+    margin-top: 1;
+    align-vertical: middle;
+}
+
+#compact-hint {
+    width: 1fr;
+    height: 1;
+    color: #776b83;
+    content-align: left middle;
+}
+
+#compact-close {
+    width: 12;
+    min-width: 10;
+}
+
+/* 历史会话选择面板 */
+SessionPanel {
+    align: center middle;
+    background: #0b0710 75%;
+}
+
+#session-dialog {
+    width: 80%;
+    height: 72%;
+    padding: 1 2;
+    background: #17121f;
+    border: none;
+}
+
+#session-title {
+    height: auto;
+    padding: 0 0 1 0;
+    color: #f6eef8;
+}
+
+#session-options {
+    height: 1fr;
+    background: #120f18;
+    scrollbar-size-vertical: 1;
+}
+
+#session-options > .option-list--option {
+    background: transparent;
+    color: #e8dff0;
+    padding: 0 1;
+}
+
+#session-options > .option-list--option-highlighted {
+    background: transparent;
+    color: #ffd4b8;
+    text-style: bold;
+}
+
+#session-actions {
+    height: 3;
+    margin-top: 1;
+    align-vertical: middle;
+}
+
+#session-hint {
+    width: 1fr;
+    height: 1;
+    color: #776b83;
+    content-align: left middle;
+}
+
+#session-cancel {
+    width: 12;
+    min-width: 10;
+}
+
+/* 上下文达到 80% 后，输入框占位文本改为红色提示 */
+#prompt.context-blocked > .input--placeholder {
+    color: #ffb3c1;
+}
+
 
 /* 命令面板：沿用马卡龙主题，不使用高亮底色块 */
 CommandPalette {

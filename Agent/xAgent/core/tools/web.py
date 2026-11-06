@@ -81,12 +81,16 @@ class WebToolset:
         limits: AgentLimits | None = None,
         *,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+        max_download_bytes: int = _MAX_DOWNLOAD_BYTES,
         curl_path: str | None = None,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds 必须大于 0")
+        if max_download_bytes < 1:
+            raise ValueError("max_download_bytes 必须大于 0")
         self.limits = limits or AgentLimits()
         self.timeout_seconds = float(timeout_seconds)
+        self.max_download_bytes = int(max_download_bytes)
         self._curl_path = curl_path
 
     # -- 内部辅助 ---------------------------------------------------------
@@ -157,10 +161,10 @@ class WebToolset:
                 message += f"\n详情：{_shorten(detail)}"
             raise ToolError(message)
 
-        if len(body) > _MAX_DOWNLOAD_BYTES:
+        if len(body) > self.max_download_bytes:
             raise ToolError(
                 "网页内容超过大小限制"
-                f"（{_MAX_DOWNLOAD_BYTES // (1024 * 1024)} MB）：{url}"
+                f"（{self.max_download_bytes // (1024 * 1024)} MB）：{url}"
             )
         if not body.strip():
             raise ToolError(f"网页返回内容为空：{url}")

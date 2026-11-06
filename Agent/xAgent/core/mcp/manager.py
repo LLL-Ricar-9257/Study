@@ -95,6 +95,7 @@ class McpServerSummary:
     endpoint: str
     connected: bool
     tool_count: int = 0
+    tool_names: tuple[str, ...] = ()
     error: str = ""
     prefix: str = ""
 
@@ -248,7 +249,7 @@ class McpClientManager:
 
     def start(self) -> None:
         """连接所有服务器并发现工具。阻塞到连接/超时，但不会抛异常。"""
-        if self._started:
+        if self._started or self._closed:
             return
         self._started = True
 
@@ -467,6 +468,9 @@ class McpClientManager:
                     endpoint=endpoint,
                     connected=True,
                     tool_count=len(server_bindings),
+                    tool_names=tuple(
+                        binding.exposed_name for binding in server_bindings
+                    ),
                     prefix=sanitize_name_token(server.name, "mcp_server"),
                 )
             )

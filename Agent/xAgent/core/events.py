@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
+from .context import ContextUsage
+
 
 @dataclass(frozen=True, slots=True)
 class TurnStarted:
@@ -71,6 +73,29 @@ class ToolRoundLimitReached:
     message: str
 
 
+@dataclass(frozen=True, slots=True)
+class ContextStatsUpdated:
+    """当前上下文与缓存用量发生变化。
+
+    ``usage.estimated`` 为 True 表示本次快照来自本地估算（供应商未返回
+    usage）；UI 可以据此在数字前加 ``~``。
+    """
+
+    usage: ContextUsage
+
+
+@dataclass(frozen=True, slots=True)
+class ContextWarning:
+    """上下文占用首次达到压缩阈值（默认 80%）。
+
+    ``message`` 是给用户看的提示；此后 Agent 会拒绝普通提示词，直到压缩完成。
+    同一次超限只会发出一次，压缩成功或清空会话后才会重新计数。
+    """
+
+    usage: ContextUsage
+    message: str
+
+
 AgentEvent: TypeAlias = (
     TurnStarted
     | TextDelta
@@ -79,10 +104,14 @@ AgentEvent: TypeAlias = (
     | TurnCompleted
     | TurnFailed
     | ToolRoundLimitReached
+    | ContextStatsUpdated
+    | ContextWarning
 )
 
 __all__ = [
     "AgentEvent",
+    "ContextStatsUpdated",
+    "ContextWarning",
     "TextDelta",
     "ToolFinished",
     "ToolRoundLimitReached",

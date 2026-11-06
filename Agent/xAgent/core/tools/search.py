@@ -91,9 +91,13 @@ class SearchToolset:
         *,
         limits: AgentLimits | None = None,
         opener: Callable[..., Any] | None = None,
+        max_response_bytes: int = _MAX_RESPONSE_BYTES,
     ) -> None:
+        if max_response_bytes < 1:
+            raise ValueError("max_response_bytes 必须大于 0")
         self.settings = settings or SearchSettings()
         self.limits = limits or AgentLimits()
+        self.max_response_bytes = int(max_response_bytes)
         self._opener = opener or urlopen
 
     # -- 内部辅助 ---------------------------------------------------------
@@ -135,7 +139,7 @@ class SearchToolset:
 
         try:
             with self._opener(request, timeout=self.settings.timeout_seconds) as response:
-                raw = response.read(_MAX_RESPONSE_BYTES + 1)
+                raw = response.read(self.max_response_bytes + 1)
         except HTTPError as exc:
             try:
                 body = exc.read()
@@ -161,10 +165,11 @@ class SearchToolset:
         except OSError as exc:
             raise ToolError(f"网络搜索请求失败：{_compact(exc)}") from exc
 
-        if len(raw) > _MAX_RESPONSE_BYTES:
+        if len(raw) > self.max_response_bytes:
             raise ToolError(
                 "搜索 API 返回内容过大"
-                f"（超过 {_MAX_RESPONSE_BYTES // (1024 * 1024)} MB），已中止处理。"
+                f"（超过 {self.max_response_bytes // (1024 * 1024)} MB），"
+                "已中止处理。"
             )
         if not raw.strip():
             raise ToolError("搜索 API 返回了空响应，请稍后重试。")

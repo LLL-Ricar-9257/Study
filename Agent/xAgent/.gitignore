@@ -15,3 +15,10 @@ try/
 office/
 tianji_report/
 logs/
+
+# 本地 MCP 配置（仓库根目录的 .mcp.json 作为示例保留）
+.mcp.json
+
+# 上下文压缩归档与会话事件日志包含完整对话原文，属于本机数据
+.agents/context/
+.agents/sessions/

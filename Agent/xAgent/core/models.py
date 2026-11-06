@@ -63,8 +63,28 @@ class ToolCallDelta:
 
 
 @dataclass(frozen=True, slots=True)
+class TokenUsage:
+    """一次模型请求的 token 用量。
+
+    ``cached_tokens`` / ``cache_miss_tokens`` 使用 ``None`` 表示供应商
+    没有返回 Prompt 缓存信息，避免把“未知”误报成 0。不同供应商字段名不同：
+    DeepSeek 使用 ``prompt_cache_hit_tokens`` / ``prompt_cache_miss_tokens``，
+    OpenAI 兼容接口通常使用 ``prompt_tokens_details.cached_tokens``。
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cached_tokens: int | None = None
+    cache_miss_tokens: int | None = None
+    reasoning_tokens: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ChatChunk:
     """模型流式输出的统一分片。"""
 
     text: str = ""
     tool_call_deltas: tuple[ToolCallDelta, ...] = field(default_factory=tuple)
+    usage: TokenUsage | None = None
+    """部分供应商只在流的最后一个分片返回用量；不需要用量的调用方可以忽略。"""

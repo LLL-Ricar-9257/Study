@@ -1,5 +1,5 @@
 """文件工具、工作区外读取、系统时间、网页抓取、网络搜索、本地命令行、
-Skill 加载/创建以及 MCP 配置写入的 JSON Schema 声明。
+Skill 加载/创建、MCP 配置写入以及上下文统计的 JSON Schema 声明。
 
 声明与实现分离：新增/调整工具描述不会影响文件操作实现。
 """
@@ -465,6 +465,52 @@ MCP_CONFIG_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ),
 )
 
+CONTEXT_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name="getContextStats",
+        description=(
+            "统计当前对话的上下文用量：当前上下文 token 数、上下文窗口占比、"
+            "剩余空间、最近一次请求的输入/输出 token、Prompt 缓存命中与未命中 "
+            "token、本次会话累计消耗和消息数量。用户询问“上下文用了多少”"
+            "“token 消耗”“缓存命中率”或需要判断是否接近上下文上限时调用。"
+            "无需参数。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    ToolSpec(
+        name="recallContext",
+        description=(
+            "在已归档的历史上下文中做本地全文关键词检索。上下文被 /compact 压缩后，"
+            "如果摘要里缺少某个早期细节（文件路径、函数名、命令输出、之前的决策等），"
+            "调用本工具从原始记录中找回。text 是必需的关键词，可以用空格分隔多个词；"
+            "id 可选，用于只检索某一个归档编号。返回相关片段、归档编号和消息位置，"
+            "结果已按相关度截断，避免再次占满上下文。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": (
+                        "可选，归档编号（例如 20261022-153000）。"
+                        "省略时在全部历史归档中检索"
+                    ),
+                },
+                "text": {
+                    "type": "string",
+                    "description": "必需，要查找的关键词或文本内容",
+                },
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+    ),
+)
+
 ALL_TOOL_SPECS = (
     FILE_TOOL_SPECS
     + EXTERNAL_TOOL_SPECS
@@ -473,4 +519,5 @@ ALL_TOOL_SPECS = (
     + RUNCLI_TOOL_SPECS
     + SKILL_TOOL_SPECS
     + MCP_CONFIG_TOOL_SPECS
+    + CONTEXT_TOOL_SPECS
 )

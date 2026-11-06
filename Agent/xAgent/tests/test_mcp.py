@@ -420,7 +420,7 @@ def test_stdio_end_to_end_and_failure_isolation(stdio_project: Path) -> None:
         manager.close()
 
 
-def test_build_agent_registers_mcp_tools_and_reports_status(
+def test_build_agent_async_loads_mcp_tools_and_reports_status(
     stdio_project: Path,
 ) -> None:
     config = AppConfig(
@@ -436,13 +436,41 @@ def test_build_agent_registers_mcp_tools_and_reports_status(
         mcp_settings=McpSettings(connect_timeout=30, call_timeout=30),
     )
     try:
+        # 先进入界面再连接：构造完成后还没有 MCP 工具。
+        assert agent.mcp_pending
+        assert not any(spec.name == "demo__echo" for spec in agent.tool_specs)
+
+        result = asyncio.run(agent.start_mcp())
+        assert any(spec.name == "demo__echo" for spec in agent.tool_specs)
+        summaries = {summary.name: summary for summary in result.summaries}
+        assert summaries["demo"].connected
+        assert summaries["demo"].tool_names
+        assert not summaries["broken"].connected
+        notices = " ".join(result.notices)
+        assert "demo" in notices
+        assert "broken" in notices
+    finally:
+        asyncio.run(agent.aclose())
+
+
+def test_build_agent_sync_mcp_mode_injects_prompt(stdio_project: Path) -> None:
+    config = AppConfig(
+        workspace=stdio_project,
+        llm=LLMSettings(api_key="test-key"),
+        limits=AgentLimits(),
+    )
+
+    agent = build_agent(
+        config,
+        project_root=stdio_project,
+        bundled_roots=(),
+        mcp_settings=McpSettings(connect_timeout=30, call_timeout=30),
+        mcp_async=False,
+    )
+    try:
         prompt = agent.messages[0].content
         assert "MCP" in prompt
         assert "demo" in prompt
-        assert "broken" in prompt
-        notices = " ".join(agent.startup_notices)
-        assert "demo" in notices
-        assert "broken" in notices
         assert any(spec.name == "demo__echo" for spec in agent.tool_specs)
     finally:
         asyncio.run(agent.aclose())

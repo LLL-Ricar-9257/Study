@@ -1,6 +1,7 @@
 """工具基础设施、文件系统、工作区外读取、网页、搜索、命令行、
-Skill 加载/创建与 MCP 配置写入实现。"""
+Skill 加载/创建、MCP 配置写入、上下文统计与历史归档检索实现。"""
 
+from .context import ContextArchiveToolset, ContextToolset
 from .external import ExternalFileToolset
 from .filesystem import FileToolset
 from .mcpconfig import McpConfigToolset
@@ -10,6 +11,7 @@ from .search import SearchToolset
 from .skills import SkillToolset
 from .specs import (
     ALL_TOOL_SPECS,
+    CONTEXT_TOOL_SPECS,
     EXTERNAL_TOOL_SPECS,
     FILE_TOOL_SPECS,
     MCP_CONFIG_TOOL_SPECS,
@@ -25,6 +27,7 @@ TOOL_COUNT = len(ALL_TOOL_SPECS)
 
 __all__ = [
     "ALL_TOOL_SPECS",
+    "CONTEXT_TOOL_SPECS",
     "EXTERNAL_TOOL_SPECS",
     "FILE_TOOL_SPECS",
     "MCP_CONFIG_TOOL_SPECS",
@@ -33,6 +36,8 @@ __all__ = [
     "SKILL_TOOL_SPECS",
     "TOOL_COUNT",
     "WEB_TOOL_SPECS",
+    "ContextArchiveToolset",
+    "ContextToolset",
     "ExternalFileToolset",
     "FileToolset",
     "McpConfigToolset",

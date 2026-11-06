@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from core.config import AgentLimits, _discover_config_path, load_config
+from core.config import (
+    CONFIG_TEMPLATE,
+    AgentLimits,
+    ConfigFileCreatedError,
+    _discover_config_path,
+    load_config,
+    write_default_config,
+)
 from core.errors import ConfigurationError
 
 
@@ -179,3 +186,119 @@ def test_invalid_search_top_k_is_rejected(
     )
     with pytest.raises(ConfigurationError, match="top_k"):
         load_config(config_file)
+
+
+def test_template_contains_all_sections() -> None:
+    for section in (
+        "[llm]",
+        "[agent]",
+        "[context]",
+        "[sessions]",
+        "[tui]",
+        "[tools]",
+        "[search]",
+        "[mcp]",
+    ):
+        assert section in CONFIG_TEMPLATE
+
+
+def test_missing_config_is_created_and_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "core.config.DEFAULT_CONFIG_PATH",
+        tmp_path / "does-not-exist.ini",
+    )
+    monkeypatch.delenv("XAGENT_CONFIG", raising=False)
+    with pytest.raises(ConfigFileCreatedError) as excinfo:
+        load_config()
+    created = excinfo.value.path
+    assert created == tmp_path / "config.ini"
+    assert created.is_file()
+    assert "api_key = sk-mock-replace-me" in created.read_text(encoding="utf-8")
+
+
+def test_write_default_config_does_not_overwrite(tmp_path: Path) -> None:
+    path = tmp_path / "config.ini"
+    path.write_text("[llm]\napi_key = keep-me\n", encoding="utf-8")
+    returned = write_default_config(path)
+    assert returned == path
+    assert "keep-me" in path.read_text(encoding="utf-8")
+
+
+def test_load_new_sections_and_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("XAGENT_CONFIG", "XAGENT_API_KEY", "XAGENT_MCP_ENABLED"):
+        monkeypatch.delenv(name, raising=False)
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\n"
+        "api_key = test-key\n"
+        "[agent]\nworkspace = .\n"
+        "[context]\n"
+        "default_window = 64000\n"
+        "warning_ratio = 0.75\n"
+        "summary_tokens = 3000\n"
+        "archive_dir = .custom/context\n"
+        "[sessions]\n"
+        "directory = .custom/sessions\n"
+        "save_on_exit = false\n"
+        "agents_file = PROJECT.md\n"
+        "[tui]\nmcp_max_tools = 5\n"
+        "[tools]\nruncli_timeout_seconds = 12\n"
+        "[mcp]\nenabled = false\nconnect_timeout = 7\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.context.default_window == 64_000
+    assert config.context.warning_ratio == 0.75
+    assert config.context.summary_tokens == 3_000
+    assert config.context.archive_dir == ".custom/context"
+    assert config.sessions.directory == ".custom/sessions"
+    assert config.sessions.save_on_exit is False
+    assert config.sessions.agents_file == "PROJECT.md"
+    assert config.tui.mcp_max_tools == 5
+    assert config.tools.runcli_timeout_seconds == 12
+    assert config.mcp.enabled is False
+    assert config.mcp.to_settings().connect_timeout == 7
+
+
+def test_invalid_warning_ratio_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("XAGENT_API_KEY", raising=False)
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\napi_key = test-key\n[context]\nwarning_ratio = 1.5\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigurationError, match="warning_ratio"):
+        load_config(path)
+
+
+def test_cli_shows_dialog_after_creating_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tui import cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("XAGENT_CONFIG", raising=False)
+    monkeypatch.setattr(
+        "core.config.DEFAULT_CONFIG_PATH",
+        tmp_path / "does-not-exist.ini",
+    )
+    calls: list[tuple[str, str]] = []
+
+    def fake_dialog(title: str, body: str, *, button: str = "退出") -> bool:
+        calls.append((title, body))
+        return True
+
+    monkeypatch.setattr("tui.dialog.show_notice_dialog", fake_dialog)
+    assert cli.main([]) == 2
+    assert (tmp_path / "config.ini").is_file()
+    assert calls
+    assert "config.ini" in calls[0][1]
+    assert "重新启动" in calls[0][1]
+

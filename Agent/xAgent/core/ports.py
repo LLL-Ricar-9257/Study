@@ -21,5 +21,9 @@ class ChatModel(Protocol):
         messages: Sequence[ChatMessage],
         tools: Sequence[Mapping[str, Any]],
     ) -> AsyncIterator[ChatChunk]:
-        """按顺序产生文本增量和工具调用增量。"""
+        """按顺序产生文本增量和工具调用增量。
+
+        供应商支持时，应在流末尾的分片里填充 ``ChatChunk.usage``，供上下文
+        统计使用；没有用量时核心会回退到本地估算。
+        """
         ...

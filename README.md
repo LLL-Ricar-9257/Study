@@ -315,16 +315,22 @@ python chat_file_tools.py --self-test   # 不调用模型，直接验证 10 个�
 - `tui` 不直接操作文件、不创建 OpenAI 客户端，只消费核心事件。
 - OpenAI、文件系统和 UI 之间通过 `ChatModel`、`ToolRegistry` 与事件契约解耦，便于以后增加 Web / Desktop 界面。
 - 提供 **10 个文件工具 + 时间工具 + `readExternalFile` 工作区外只读 + `fetchWeb` 网页抓取 +
-  `searchweb` 网络搜索 + `Runcil` 本地命令行 + `loadSkill` / `createSkill`**；
+  `searchweb` 网络搜索 + `Runcil` 本地命令行 + `loadSkill` / `createSkill` +
+  `getContextStats` / `recallContext`**；
   普通文件操作限制在工作区内，`readExternalFile` 只提供用户明确要求时的只读例外。
 - **MCP Client**：读取启动目录的 `.mcp.json`，连接 stdio / Streamable HTTP MCP Server，
   自动发现工具并注册为 Function Calling 工具，单个服务器故障不影响本地工具；
   支持用 `createMcp` 让模型校验并合并写入 MCP 配置。
+- **上下文管理**：启动时从上游读取模型上下文窗口，实时显示 token 与 Prompt 缓存用量；
+  达到 80% 时提示并使用 `/compact` 归档原始上下文、生成摘要；`.agents/sessions` 支持
+  `/save`、`/resume` 会话恢复，`AGENTS.md` 首次加载注入一次。
 - 支持多轮工具调用（默认不限制轮数）、工具错误回传、取消生成和历史回滚。
 
 **TUI 功能：**
 
 - opencode 风格无边框输入区、马卡龙配色、流式 Markdown 与默认折叠的工具调用卡片。
+- 输入 `/` 弹出斜杠工具菜单（`/new`、`/resume`、`/save`、`/compact`、`/context` 等），
+  支持过滤、方向键选择和 Enter 确认；对话框下方实时显示上下文与缓存状态。
 - `Ctrl+P` 打开全中文命令面板；`Ctrl+V` 直接粘贴系统剪贴板；`Ctrl+L` 清空；`Esc` 取消当前生成。
 - Windows `cmd.exe` 启动时自动尝试切换黑体，减少中英文和边框错位。
 - 窗口失焦后重新激活时自动重排会话，修复后台生成造成的错位。
@@ -335,15 +341,14 @@ python chat_file_tools.py --self-test   # 不调用模型，直接验证 10 个�
 cd Agent/xAgent
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-Copy-Item config.example.ini config.ini
-# 编辑 config.ini，填入 [llm] api_key
 .\.venv\Scripts\xagent.exe --workspace .
+# 首次启动会在当前目录生成 config.ini，填入 [llm] api_key 后重启
 ```
 
 **验证：**
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q   # 167 passed, 1 skipped
+.\.venv\Scripts\python.exe -m pytest -q   # 229 passed, 1 skipped
 .\.venv\Scripts\ruff.exe check core tui tests scripts
 ```
 

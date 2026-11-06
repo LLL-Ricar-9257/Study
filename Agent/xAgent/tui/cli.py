@@ -8,11 +8,12 @@ from collections.abc import Sequence
 from dataclasses import replace
 
 from core import (
+    ConfigFileCreatedError,
     ConfigurationError,
-    McpSettings,
     XAgentError,
     __version__,
     build_agent,
+    discover_model_metadata,
     load_config,
 )
 
@@ -32,7 +33,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config",
         "-c",
         metavar="FILE",
-        help="配置文件路径，默认为项目根目录的 config.ini",
+        help="配置文件路径，默认为当前目录或项目根目录的 config.ini",
     )
     parser.add_argument(
         "--mcp-config",
@@ -57,6 +58,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         config = load_config(config_path=args.config, workspace=args.workspace)
+    except ConfigFileCreatedError as exc:
+        # 当前目录没有配置：已经生成模板，提示用户修改后重启。
+        from .dialog import show_notice_dialog
+
+        show_notice_dialog(
+            "已生成新的 config.ini",
+            "当前目录没有配置文件，xAgent 已生成一份完整模板：\n\n"
+            f"{exc.path}\n\n"
+            "请把 [llm] api_key 改成真实值（其余选项可按需调整），"
+            "然后重新启动 xAgent。",
+            button="退出",
+        )
+        return 2
     except ConfigurationError as exc:
         print(f"启动失败：{exc}", file=sys.stderr)
         return 2
@@ -64,14 +78,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"启动失败：{exc}", file=sys.stderr)
         return 2
 
-    mcp_settings = McpSettings.from_environment()
+    mcp_settings = config.mcp.to_settings()
     if args.mcp_config:
         mcp_settings = replace(mcp_settings, config_path=args.mcp_config)
     if args.no_mcp:
         mcp_settings = replace(mcp_settings, enabled=False)
 
+    # 上下文窗口等信息必须来自当前模型的上游接口，不能依赖本地配置。
+    model_metadata = discover_model_metadata(
+        config.llm,
+        timeout=config.tools.model_info_timeout_seconds,
+    )
+
     try:
-        agent = build_agent(config, mcp_settings=mcp_settings)
+        agent = build_agent(
+            config,
+            mcp_settings=mcp_settings,
+            model_metadata=model_metadata,
+        )
     except Exception as exc:
         print(f"初始化 Agent 失败：{exc}", file=sys.stderr)
         return 2
@@ -91,7 +115,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure_console_font()
 
     try:
-        FileAgentApp(agent=agent, config=config).run()
+        FileAgentApp(
+            agent=agent,
+            config=config,
+            model_metadata=model_metadata,
+        ).run()
     except KeyboardInterrupt:
         return 130
     return 0

@@ -64,15 +64,57 @@
 
 `send(text)` 是**异步生成器**：
 
-1. 接收用户输入；
+1. 接收用户输入；上下文达到 80% 时直接抛 `ContextLimitError`（普通提示词被暂停，
+   斜杠命令仍可通过各自的入口执行）；
 2. 拉取模型流，产生 `TextDelta`；
 3. 聚合工具调用增量；
 4. 执行工具（`asyncio.to_thread`，避免阻塞事件循环）；
 5. 把工具结果写回历史，进入下一轮；
-6. 正常结束产生 `TurnCompleted`，异常产生 `TurnFailed`。
+6. 正常结束产生 `TurnCompleted`，异常产生 `TurnFailed`；
+7. 每次用量快照后发现首次达到阈值时，追加一个 `ContextWarning`。
 
 生成器天然提供背压。UI 每消费一个事件才拉取下一个；取消时直接关闭生成器，
 核心在 `finally` 中回滚本轮消息。
+
+`FileAgent` 还提供不经过 `send()` 事件流的辅助用例：
+
+- `compact()`：上下文压缩的完整流程。先调用 `ContextArchive.save()` 把完整原文
+  写入 `.agents/context/<编号>.jsonl`（失败即中止），再用不携带工具的专用 Prompt
+  请求模型生成摘要，最后用「原系统提示词 + 摘要 user 消息（末尾附归档说明）+
+  简短 assistant 确认」替换历史，返回 `CompactionResult`（摘要、归档编号 / 路径、
+  压缩前后消息数、token 与对照面板文本）。供应商返回 usage 时会计入会话累计；
+  取消、模型失败或归档失败都不会修改历史。
+- `refine_prompt(draft)`：用独立的 system / user 请求改写提示词草稿，不写入对话
+  历史，只返回改写结果，供 UI 回填输入框；usage 只累计到会话消耗。
+- `save_session()` / `new_session()` / `resume_session()` / `rename_session()`：
+  会话事件日志的保存、切换与恢复；`new_session()` 会重新读取 AGENTS.md，恢复会话
+  则直接复用日志中的注入消息。所有操作与 `send()` 共用同一把锁。
+- `start_mcp()`：在 `asyncio.to_thread` 中调用 MCP 管理器的阻塞 `start()`，完成后
+  通过 `ToolRegistry.register()` 动态注册工具；重复调用返回第一次的结果。
+
+### `core.session`
+
+会话事件日志与 AGENTS.md：
+
+- `SessionStore.save()` 把会话头 + 每条消息写成 `.agents/sessions/<编号>.jsonl`
+  （临时文件 + 原子替换）；`load()` 重建 `ChatMessage`，`list_sessions()` 只解析
+  头部和消息计数，用于 `/resume` 列表。
+- `load_agents_md()` 读取项目根目录的 `AGENTS.md` 并限制长度；`agents_md_message()`
+  把它包装成一条带固定前缀的 user 消息。`FileAgent` 在每个会话首次加载时调用一次，
+  注入消息随日志持久化，后续轮次/恢复会话不再重复注入，保证 Prompt 缓存稳定。
+- 会话编号与上下文归档共用 `YYYYMMDD-HHMMSS` 形式，便于排序与人工识别。
+
+### `core.config`
+
+所有可调参数集中在一个模块：
+
+- 每个小节对应一个 frozen dataclass（`ContextSettings`、`SessionSettings`、
+  `TuiSettings`、`ToolsSettings`、`McpConfigSettings` 等），都有默认值和校验；
+- `load_config()` 缺失某小节或某一项时回退默认值，环境变量优先级更高；
+- 当前目录没有 `config.ini` 时，`write_default_config()` 生成完整模板并抛
+  `ConfigFileCreatedError`，`tui/cli.py` 弹窗提示用户修改后重启；
+- `McpConfigSettings.to_settings()` 延迟导入 `core.mcp`，避免
+  `core.config` ↔ `core.tools` 的导入环。
 
 ### `core.events`
 
@@ -87,8 +129,67 @@
 | `TurnCompleted` | 正常结束 | 停止光标、恢复输入 |
 | `TurnFailed` | 失败且历史已回滚 | 显示错误 |
 | `ToolRoundLimitReached` | 达到显式配置的工具轮数上限 | 显示提示（默认不限制时不会出现） |
+| `ContextStatsUpdated` | 上下文 / 缓存用量变化 | 刷新对话框下方的用量栏 |
+| `ContextWarning` | 上下文首次达到配置的压缩阈值（默认 80%） | 显示警告；此后普通提示词被暂停 |
 
 事件不包含 OpenAI 原始 chunk、文件句柄或 UI 组件。
+
+### `core.context`
+
+`ContextTracker` 为每个会话维护上下文与缓存用量，是线程安全的：Agent 在每次
+模型请求前调用 `refresh()` 写入本地估算，在流结束后调用 `record_request()`
+写入供应商返回的 `usage`；`getContextStats` 工具从工具线程调用 `snapshot()`
+读取同一份快照。`ContextUsage` 同时包含：
+
+- 当前上下文 token 数、窗口大小、占比、剩余空间；
+- 最近一次请求的输入 / 输出 / 推理 token；
+- 最近一次与累计的 Prompt 缓存命中 / 未命中 token；
+- 会话请求次数、消息总数与按角色拆分的消息数。
+
+供应商不返回 `usage` 时，`refresh()` 使用 `estimate_messages_tokens()` 估算，
+快照中的 `estimated=True` 让 UI 标注 `~`；供应商不返回缓存字段时
+`cache_hit_rate` 为 `None`，避免把“未知”展示成 0。窗口大小为 0 表示尚未从上游
+获取：`window_known=False`，但 `effective_window` 回退到 `DEFAULT_CONTEXT_WINDOW`
+（128k），UI 用 `window_assumed` 标注「默认」，`needs_compaction` 按
+`effective_ratio >= CONTEXT_WARNING_RATIO`（80%）判断是否暂停普通对话。
+
+### `core.archive`
+
+`ContextArchive` 负责压缩前的原始上下文归档：`save()` 把消息逐条写成
+`.agents/context/<YYYYMMDD-HHMMSS>.jsonl`（一行一条，含角色、正文、工具调用
+参数、工具返回和 `seq` 顺序号），使用「临时文件 + `os.replace`」保证归档要么
+完整、要么不存在；同一秒重名时追加 `-2`、`-3`。`recall()` 读取指定归档或全部
+归档，对正文与工具信息做大小写无关的关键词匹配，按「命中词数 + 出现次数」排序，
+返回 `RecallHit`（归档编号、消息位置、角色、片段），并限制返回条数与总字符数。
+这里刻意不使用向量数据库或 Embedding，检索逻辑全部是标准库实现。
+
+### `core.compaction`
+
+保存上下文压缩专用的 System Prompt、transcript 渲染与消息构造：
+
+- `COMPACTION_SYSTEM_PROMPT`：要求模型生成约 5,000 Tokens 的 Markdown 工作摘要
+  （用户目标、已完成工作、当前状态、关键技术信息、关键决策、下一步）；
+- `render_transcript()`：把消息渲染成压缩模型可读的文本，单条消息与总长度都有
+  上限，避免压缩请求再次撑满窗口；`render_display_transcript()` 给 TUI 对照面板
+  使用更短的上限；
+- `build_compaction_messages()`：只产生 system + user 两条消息，**不携带工具**；
+- `build_archive_notice()` / `build_summary_message()`：在摘要末尾追加归档说明，
+  并组合成替换后的历史消息。
+
+### `core.model_metadata`
+
+`discover_model_metadata()` 在启动时同步请求当前模型的上游元数据：
+
+1. 由 `base_url` 生成 `/models` 候选地址（兼容以 `/v1` 结尾与不带 `/v1` 的写法），
+   统一小写主机名；
+2. 带 `Authorization: Bearer <api_key>` 请求，按模型 id 选择条目；
+3. 从条目及其 `top_provider` / `details` 等嵌套字段中提取
+   `context_window`、`context_length`、`max_model_len`、`max_input_tokens`、
+   `n_ctx` 等上下文长度字段；
+4. 列表接口没有该字段时，再尝试 `/models/{model}`；
+5. 返回 `ModelMetadata`（上下文窗口、最大输出、上游名称、实际 endpoint、错误）。
+   失败只返回可读错误，不抛异常、不记录 API Key。`tui/cli.py` 在 `build_agent()`
+   之前调用它，并把结果同时传给 Agent 的 `ContextTracker` 和 TUI。
 
 ### `core.skills`
 
@@ -108,6 +209,12 @@ xAgent 自带目录（`core` 包上一级的 `.agents/skills`，扫描根由
 
 - `paths.Workspace`：统一解析并校验路径，越界时抛出 `WorkspaceBoundaryError`。
 - `filesystem.FileToolset`：10 个文件工具 + 系统时间工具的实现，不依赖全局变量，便于测试和多工作区。
+- `context.ContextToolset`：`getContextStats` 的实现，读取 Agent 共享的
+  `ContextTracker` 快照并格式化为模型可读的中文报告；不需要参数，也不访问
+  文件或网络。
+- `context.ContextArchiveToolset`：`recallContext` 的实现，把
+  `ContextArchive.recall()` 的结果格式化为带归档编号与位置的中文片段；
+  压缩后由模型主动调用，找回摘要中缺失的早期细节。
 - `external.ExternalFileToolset`：`readExternalFile` 的实现，提供工作区外的**只读**例外：
   绝对路径或相对当前工作目录的路径都可以，只读取纯文本并识别编码，沿用
   `AgentLimits` 的大小/字符数上限；拒绝设备、管道和 `\\?\GLOBALROOT` 路径。
@@ -132,7 +239,7 @@ xAgent 自带目录（`core` 包上一级的 `.agents/skills`，扫描根由
   `scripts/` 等附加目录，模型需要时继续调用文件工具。
 - `specs.FILE_TOOL_SPECS` / `specs.EXTERNAL_TOOL_SPECS` / `specs.WEB_TOOL_SPECS` /
   `specs.SEARCH_TOOL_SPECS` / `specs.RUNCLI_TOOL_SPECS` / `specs.SKILL_TOOL_SPECS` /
-  `specs.MCP_CONFIG_TOOL_SPECS`：
+  `specs.MCP_CONFIG_TOOL_SPECS` / `specs.CONTEXT_TOOL_SPECS`：
   工具 JSON Schema，与实现解耦；`ALL_TOOL_SPECS` 是注册时使用的完整声明。
 - `mcpconfig.McpConfigToolset`：`createMcp` 的实现，把用户给出的 MCP Server 配置
   写进 `.mcp.json`。默认目标是 `--mcp-config` / `XAGENT_MCP_CONFIG` 指定的路径，
@@ -161,8 +268,11 @@ MCP Client 独立成包，避免把传输细节混入 `core.tools`：
 - `tools.build_bindings()`：把 MCP Tool 转换为 `ToolSpec`，生成
   `<server>__<tool>` 唯一名称并维护「对外名称 → 服务器 / 原始工具名」映射；
   `format_result()` 处理文本内容、结构化数据、图片/资源占位、错误标记和截断。
-- 连接失败只记录在 `summaries` / `issues`；`build_agent` 把它们写入系统提示词和
-  `FileAgent.startup_notices`。`close()` 通过 `FileAgent.aclose()` 的 cleanup 列表统一调用。
+- 连接失败只记录在 `summaries` / `issues`；`build_agent(..., mcp_async=False)` 会把
+  它们写入系统提示词和 `FileAgent.startup_notices`。默认的异步模式下，TUI 首屏
+  渲染完成后调用 `FileAgent.start_mcp()`，后台线程连接服务器，再把
+  `McpServerSummary.tool_names` 刷新到侧栏，并用 `ToolRegistry.register()` 动态
+  注册工具。`close()` 通过 `FileAgent.aclose()` 的 cleanup 列表统一调用。
 
 ### `core.llm.openai_chat.OpenAIChatModel`
 
@@ -213,8 +323,39 @@ await websocket.send_json(payload)
 在 Windows `cmd.exe` 下，`tui/terminal.py` 还会尝试把控制台字体切换为黑体，
 保留原字号；接口不可用或用户禁用时静默跳过。底部 composer 采用无边框、
 背景分层的布局，输入框本身透明，避免整行色块和边框字符带来的视觉问题。
+composer 下方是单行上下文用量栏，第一段始终是「当前上下文 / 模型窗口 / 占比」，
+窗口未知时回退到 128k 并显示「默认」；按终端宽度自动隐藏缓存、消息等次要字段。
+数据来自 `ContextStatsUpdated` 事件，清空会话后重新读取
+`FileAgent.context_usage`。侧栏同步显示同样的三项数字。达到 80% 后，用量栏追加
+`已达 {warning_ratio}%，请执行 /compact`，输入框占位文本改为提示，且普通提示词提交被拦截，
+但斜杠命令仍然可用。
 消息和工具调用也不使用整块背景，只通过薄荷绿、奶油黄、粉色和淡紫做
 前景强调，避免终端把深蓝背景映射成亮蓝色块。
+
+`tui/slash.py` 维护斜杠命令元数据（名称、标题、描述、别名、关键词、执行方式），
+`tui/widgets.py` 的 `SlashMenu` 只负责把过滤结果渲染成 `OptionList`。输入框内容以
+`/` 开头且不含空格时菜单显示；App 保持输入框焦点，把 `PromptInput` 的上下键转发给
+菜单，回车时优先匹配完整命令名、否则选择高亮项。命令分三类：`action` 立即执行，
+`compose` 把 `/<name> ` 回填输入框等待参数，`template` 回填预置提示词。`/compact`
+和 `/refine` 通过 Textual worker 调用核心，复用与普通对话相同的忙碌锁和取消机制。
+压缩成功后 `FileAgentApp` 把 `CompactionResult` 交给 `CompactionPanel`：一个
+`ModalScreen` 浮动面板，用两栏分别展示压缩前原文与压缩后摘要，两栏各自滚动，
+`Esc` 或「关闭」按钮退出；面板只读，不参与业务逻辑。
+
+会话相关命令由 `tui/app.py` 的 `_command_new` / `_command_save` / `_command_resume`
+处理，核心侧对应 `FileAgent.new_session/save_session/resume_session`：
+
+- `/resume` 用 `SessionPanel`（`ModalScreen` + `OptionList`）展示历史会话，
+  ↑↓ 移动、Enter 选中并回调 `_resume_session_worker()`、Esc 取消；
+  恢复后用 `_render_history()` 把 user / assistant / tool 消息重建成原来的卡片；
+- `/new` 先保存当前会话，再清空会话区并重新挂载系统提示词与 AGENTS.md 提示；
+- `/save`、`/session`、`/rename`、`/mcp`、`/agents` 都是只读或轻量操作，
+  直接追加 `NoticeMessage`，不占用对话历史。
+
+侧栏由 `#sidebar-context`（窗口占比）、`#sidebar-mcp`（MCP 服务器与工具）和
+`#sidebar-workspace` 组成，整体放在 `VerticalScroll` 里。`on_mount` 先渲染
+“连接中...”，再用 worker 调用 `FileAgent.start_mcp()`，完成后只更新
+`#sidebar-mcp`，因此 MCP 连接不会阻塞首屏。
 
 `tui/palette.py` 继承 Textual 的 `CommandPalette`，替换搜索提示和无匹配提示；
 `FileAgentApp.get_system_commands()` 不再调用父类，而是只提供中文命令。
@@ -285,9 +426,11 @@ Skill 是内容扩展，通常不需要改代码：
 ### 新增界面
 
 1. 新建 `web/` 或 `desktop/` 包；
-2. 只从 `core` 导入 `load_config`、`build_agent`、事件类型；
-3. 实现输入采集 + 事件渲染；
-4. 不要 import `tui`，也不要在 UI 中直接操作文件。
+2. 只从 `core` 导入 `load_config`、`build_agent`、`discover_model_metadata`、事件类型；
+3. 启动时调用 `discover_model_metadata(config.llm)`，把结果传给
+   `build_agent(..., model_metadata=...)`，并在界面中展示上游窗口或明确的未知状态；
+4. 实现输入采集 + 事件渲染；
+5. 不要 import `tui`，也不要在 UI 中直接操作文件。
 
 ## 6. 一致性与容错
 
@@ -332,8 +475,12 @@ UI 会展示每个工具的执行结果。
 - `tests/test_runcli_tool.py`：参数列表执行、`shell=False`、非零退出码、超时、输出截断、缺少程序、参数校验、注册与真实子进程。
 - `tests/test_skills.py`：Skill 发现与 Frontmatter、提示词注入、按需加载、相对/项目/绝对路径、递归唯一匹配、同名候选、越界拒绝与注册；以及 `createSkill` 的名称规范化、Frontmatter 生成/保留、已存在拒绝覆盖和参数校验。
 - `tests/test_agent.py`：工具循环、无上限多轮工具调用、可选轮数上限、模型失败回滚、并发拒绝、关闭。
-- `tests/test_config.py`：配置优先级、可选工具轮数上限（留空/0 表示不限制）、相对工作区、Key 隐藏、错误配置。
+- `tests/test_context.py`：token 估算、上下文 / 缓存累计、无 usage 的估算兜底、清空重置、DeepSeek / OpenAI usage 字段解析、流式适配器的 `stream_options` 回退、`getContextStats` 报告与注册、`ContextStatsUpdated` 事件、失败回滚后的重新估算、上游窗口未知时按 128k 默认计算占比、80% 阈值警告与普通提示词暂停、压缩前 JSONL 归档与归档说明、压缩失败保留历史、`recallContext` 的归档 / 关键词检索 / 位置返回 / 结果截断，以及 `/compact` 的摘要替换、`/refine` 的独立请求与历史不变。
+- `tests/test_model_metadata.py`：DeepSeek 扁平字段、OpenRouter 嵌套字段、`/models/{model}` 回退、主机名大小写归一化、真实 HTTP 请求与 Authorization 头、缺少上下文窗口时不伪造 0、错误信息不泄漏 API Key。
+- `tests/test_slash.py`：斜杠命令别名、精确名称优先的过滤顺序、中文关键词匹配、模板生成和帮助文本。
+- `tests/test_session.py`：会话事件日志的保存 / 读取 / 列表、JSONL 结构、AGENTS.md 首轮注入一次、`/save` 持久化注入事件、恢复会话不重复注入、`/new` 重新读取 AGENTS.md 且空会话不落盘。
+- `tests/test_config.py`：配置优先级、完整模板小节、当前目录自动生成配置并抛错、新配置小节与默认值、`warning_ratio` 校验、CLI 创建配置后的对话框、可选工具轮数上限、相对工作区、Key 隐藏、错误配置。
 - `tests/test_architecture.py`：core 不得依赖 Textual/Rich，事件契约公开。
-- `tests/test_mcp.py`：`.mcp.json` 解析（两种传输、环境变量展开、非法类型/字段）、工具前缀与冲突处理、Schema 清洗、文本/结构化/错误/截断结果格式化；用临时 stdio MCP Server 做端到端连接、工具注册、调用转发、server 错误与单服务器故障隔离；另有一个通过 `XAGENT_MCP_LIVE_TEST=1` 开启的真实 Streamable HTTP 测试。
+- `tests/test_mcp.py`：`.mcp.json` 解析（两种传输、环境变量展开、非法类型/字段）、工具前缀与冲突处理、Schema 清洗、文本/结构化/错误/截断结果格式化；用临时 stdio MCP Server 做端到端连接、工具注册、调用转发、server 错误与单服务器故障隔离；异步模式下 `build_agent` 构造完成时未注册工具、`start_mcp()` 后动态注册并返回服务器摘要与工具名；同步模式仍可注入系统提示词；另有一个通过 `XAGENT_MCP_LIVE_TEST=1` 开启的真实 Streamable HTTP 测试。
 - `tests/test_mcp_config_tool.py`：`createMcp` 的新建/合并写入、保留其他顶层字段、旧 `mcp_servers` 键、覆盖保护与 `overwrite=true`、非法服务器配置与损坏 JSON 时零改动、空/重名服务器名、`${VAR}` 原样保留、不回显密钥、`path`/`config_path` 解析、写入后由运行期解析器与 `ToolRegistry` 正常读取，以及 `build_agent` 的注册与系统提示词注入。
-- `tests/test_tui.py`：Textual 启动、流式回复、取消回滚、工具调用卡片默认折叠、系统剪贴板粘贴、字符宽度归一化、系统提示词折叠面板和无边框样式约束。
+- `tests/test_tui.py`：Textual 启动、流式回复、取消回滚、工具调用卡片默认折叠、系统剪贴板粘贴、字符宽度归一化、系统提示词折叠面板、对话框下方与侧栏的「上下文 / 窗口 / 占比」用量栏、窗口未知时的「128k 默认」标记、`/context` 明细、斜杠菜单的打开 / 过滤 / Esc 关闭 / 精确命令选择、模板回填、`/refine` 回填、`/compact` 压缩与两栏对照面板、80% 阈值后的输入拦截与压缩恢复、`/save` / `/new` / `/resume` 的保存与恢复、会话选择面板、`/session` / `/rename` / `/mcp`、侧栏 MCP 区域在异步加载后的刷新，以及无边框样式约束。

@@ -31,5 +31,9 @@ class AgentBusyError(XAgentError):
     """同一个 Agent 实例正在处理上一轮请求。"""
 
 
+class ContextLimitError(XAgentError):
+    """上下文已达到压缩阈值，Agent 暂停接受新的普通提示词。"""
+
+
 class ModelCallError(XAgentError):
     """模型调用失败。"""

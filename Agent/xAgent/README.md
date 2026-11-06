@@ -11,14 +11,39 @@
 - **Core / UI 分离**：`core` 不依赖 Textual、Rich，也不读写终端；`tui` 不直接操作文件或调用模型。
 - **事件流驱动**：核心通过 `AgentEvent` 异步流输出文本、工具调用、完成和错误状态；
   Textual、WebSocket、桌面端可以消费同一套事件。
-- **10 个文件工具 + 工作区外只读 + 系统时间工具 + 网页抓取 + 网络搜索 + 本地命令行 + Skill 加载/创建 + MCP 配置写入**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
+- **10 个文件工具 + 工作区外只读 + 系统时间工具 + 网页抓取 + 网络搜索 + 本地命令行 + Skill 加载/创建 + MCP 配置写入 + 上下文统计 + 历史归档检索**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
   获取当前日期、时间、时区和星期，用 `readExternalFile` 读取用户明确指定的
   工作区外纯文本文件（只读），用 `fetchWeb` 抓取网页正文并转换为 Markdown，
   用 `searchweb` 调用百度千帆 AI 搜索获取互联网实时信息，用 `Runcil`
   运行本机已安装的任意 CLI 程序并返回 stdout / stderr / 退出码，用
   `loadSkill` 按需加载 `.agents/skills` 中的 Agent Skill，用 `createSkill`
   根据自然语言要求生成新的 Skill 骨架，用 `createMcp` 把用户给出的 MCP Server
-  配置校验后合并写入 `.mcp.json`。
+  配置校验后合并写入 `.mcp.json`，用 `getContextStats` 统计当前对话的 token、
+  上下文窗口占用和 Prompt 缓存命中情况，用 `recallContext` 在压缩前的原始
+  上下文归档中做本地关键词检索。
+- **启动时从上游读取上下文窗口**：每次启动请求当前模型的 `/models` 元数据，
+  读取 `context_window` 并写入状态栏与会话统计；上游没有返回时按 **128k 默认**
+  计算占比，并在界面明确标注「默认」，不把默认值伪装成上游数据。
+- **上下文用量状态栏**：对话框下方和侧栏实时显示 `当前上下文 / 模型窗口`
+  （如 `12.3k / 128k 默认  10%`）、Prompt 缓存命中 / 未命中与命中率、消息数；
+  供应商返回 `usage` 时使用精确值，否则用本地估算并标注 `~`。`/context`
+  可查看完整明细。
+- **上下文压缩与历史归档**：占用达到窗口 **80%** 时提示并暂停接受普通提示词；
+  用户执行 `/compact` 后，先把完整原始上下文写入 `.agents/context/<编号>.jsonl`，
+  再让模型生成约 5,000 Tokens 的摘要替换历史，并弹出压缩前后两栏对照面板。
+- **会话持久化与恢复**：`/save` 把会话写入 `.agents/sessions/<编号>.jsonl`
+  事件日志；`/new` 自动保存当前会话并开始新会话；`/resume` 弹出历史会话列表
+  （↑↓ 选择、Enter 恢复、Esc 取消）；`/quit` 退出时按配置自动保存。
+- **AGENTS.md 一次注入**：会话首次加载时读取项目根目录的 `AGENTS.md`，作为一条
+  历史消息注入并随会话日志持久化，后续轮次和恢复会话直接复用，避免破坏缓存。
+- **异步 MCP 加载**：先渲染 TUI，再在后台连接 MCP Server；侧栏实时显示每个
+  服务器的连接状态和可用工具，加载完成后只刷新该区域，不阻塞首屏。
+- **配置即插即用**：所有可调参数集中在 `config.ini`（含默认值）；当前目录没有
+  配置文件时自动生成完整模板并弹出对话框，提示修改后重启。
+- **斜杠工具菜单**：输入单个 `/` 自动在输入框上方弹出工具列表，继续输入可过滤，
+  `↑↓` 选择、`Enter` 确认、`Esc` 关闭。内置 `/new`、`/resume`、`/save`、
+  `/compact`、`/refine`、`/review`、`/init`，以及 `/mcp`、`/agents`、`/session`
+  等会话与诊断命令。
 - **MCP Client**：启动时读取当前项目目录下的 `.mcp.json`，连接 **stdio** 和
   **Streamable HTTP** 两种 MCP Server，调用 `list_tools()` 自动发现工具并注册到
   现有 Function Calling 工具集合；工具名带服务器前缀，调用结果（文本、结构化数据、
@@ -48,9 +73,12 @@
 xAgent/
 ├─ core/                         # 业务核心：无终端、无 UI 依赖
 │  ├─ __init__.py                # 对外公共 API
-│  ├─ agent.py                   # 对话编排 + 工具循环
+│  ├─ agent.py                   # 对话编排 + 工具循环 + 压缩流程
+│  ├─ archive.py                 # 上下文归档（JSONL）与本地关键词检索
 │  ├─ bootstrap.py               # 组合根：配置 -> Agent
+│  ├─ compaction.py              # 压缩 Prompt、摘要消息与归档说明
 │  ├─ config.py                  # config.ini / 环境变量 / 限额
+│  ├─ context.py                 # 上下文 token / 缓存用量跟踪 + 80% 阈值
 │  ├─ errors.py                  # 领域异常
 │  ├─ events.py                  # UI 无关的领域事件（显示协议）
 │  ├─ models.py                  # 供应商无关的消息/分片结构
@@ -59,12 +87,14 @@ xAgent/
 │  │  ├─ manager.py              # MCP 连接、工具发现、调用转发
 │  │  └─ tools.py                # 工具命名映射与结果格式化
 │  ├─ ports.py                   # ChatModel 抽象端口
-│  ├─ prompts.py                 # 系统提示词（含 Skill 列表）
+│  ├─ prompts.py                 # 系统提示词（含 Skill 列表与项目指令规则）
+│  ├─ session.py                 # 会话事件日志、AGENTS.md 读取与注入消息
 │  ├─ skills.py                  # Agent Skills 发现与 Frontmatter 解析
 │  ├─ llm/
 │  │  └─ openai_chat.py          # OpenAI 兼容流式适配器
 │  └─ tools/
 │     ├─ filesystem.py           # 10 个文件工具 + 时间工具的实现
+│     ├─ context.py              # 上下文统计 + 归档检索（getContextStats、recallContext）
 │     ├─ external.py             # 工作区外只读读取（readExternalFile）
 │     ├─ web.py                  # curl 抓取 + trafilatura 正文提取（fetchWeb）
 │     ├─ search.py               # 百度千帆 AI 搜索（searchweb）
@@ -73,16 +103,18 @@ xAgent/
 │     ├─ mcpconfig.py            # 写入 MCP 配置（createMcp）
 │     ├─ paths.py                # 工作区路径策略与名称校验
 │     ├─ registry.py             # 工具注册、JSON 参数校验、异常隔离
-│     ├─ specs.py                # 工具 JSON Schema 声明（文件 / 网页 / 搜索 / 命令行 / Skill / MCP）
+│     ├─ specs.py                # 工具 JSON Schema 声明（文件 / 网页 / 搜索 / 命令行 / Skill / MCP / 上下文）
 │     └─ types.py                # ToolSpec / ToolResult
 ├─ tui/                          # Textual 表现层
 │  ├─ app.py                     # 布局、输入、事件消费、生命周期
-│  ├─ widgets.py                 # 消息/工具卡片组件
+│  ├─ widgets.py                 # 消息/工具卡片、上下文栏、斜杠菜单组件
+│  ├─ slash.py                   # 斜杠命令元数据、过滤与提示词模板
 │  ├─ formatting.py              # 纯展示格式化 + 宽度安全字符处理
 │  ├─ clipboard.py               # 系统剪贴板读取（Windows / tkinter）
 │  ├─ palette.py                 # 全中文命令面板
 │  ├─ terminal.py                # Windows 控制台字体切换（黑体）
 │  ├─ styles.tcss                # Textual 主题（无 box-drawing 边框）
+│  ├─ dialog.py                  # 启动阶段对话框（配置已生成等）
 │  ├─ cli.py                     # 命令行入口
 │  └─ __main__.py                # python -m tui
 ├─ tests/                        # 核心、TUI 冒烟、架构约束测试
@@ -111,6 +143,8 @@ py -3.11 -m venv .venv
 Copy-Item config.example.ini config.ini
 # 编辑 config.ini，填入 [llm] api_key
 # 如需联网搜索，再填入 [search] baidu_qianfan_api_key
+# 也可以直接启动：当前目录没有 config.ini 时会自动生成完整模板，
+# 弹窗提示你修改 api_key 后重新启动。
 
 # 可选：在启动 xAgent 的目录创建 .mcp.json（见“外部 MCP Server”一节）
 ```
@@ -135,32 +169,27 @@ Copy-Item config.example.ini config.ini
 
 ## 配置
 
-`config.ini`（参考 `config.example.ini`）：
+所有可调参数都集中在 `config.ini`，完整模板见 `config.example.ini`。启动时按
+以下顺序查找配置：
 
-```ini
-[llm]
-api_key = sk-your-key-here
-base_url = https://api.deepseek.com/v1
-model = deepseek-chat
-timeout_seconds = 120
+1. 命令行 `--config FILE`；
+2. `XAGENT_CONFIG` 环境变量；
+3. **当前目录**的 `config.ini`；
+4. 都没有时，**在当前目录自动生成一份完整模板**，弹窗提示用户填写
+   `[llm] api_key` 后重新启动，然后退出。
 
-[agent]
-# 留空则使用启动时的当前目录；相对路径以配置文件目录为基准
-workspace =
-# 单轮对话的工具调用轮数上限；留空或 0 表示不限制
-max_tool_rounds =
-max_text_bytes = 5242880
-default_max_chars = 50000
-max_list_items = 2000
+每一项都有内置默认值，缺少某个小节或某一项不会导致启动失败。主要参数：
 
-[search]
-# 百度千帆 AI 搜索 API Key；留空时启动不受影响，调用 searchweb 会返回提示
-baidu_qianfan_api_key =
-# 可选，默认即为官方接口
-api_url = https://qianfan.baidubce.com/v2/ai_search/web_search
-top_k = 10
-timeout_seconds = 20
-```
+| 小节 | 参数 | 说明 |
+| --- | --- | --- |
+| `[llm]` | `api_key` / `base_url` / `model` / `timeout_seconds` | 模型连接 |
+| `[agent]` | `max_tool_rounds` / `max_text_bytes` / `default_max_chars` / `max_list_items` | 工具循环与读取限额 |
+| `[context]` | `default_window`（128k）/ `warning_ratio`（0.8）/ `summary_tokens`（5000）/ `archive_dir` / `max_recall_hits` / `max_recall_chars` / 各类 transcript 上限 | 上下文监控、压缩与检索 |
+| `[sessions]` | `directory` / `save_on_exit` / `auto_save_on_new` / `max_list` / `agents_file` / `inject_agents_md` / `max_agents_md_chars` | 会话日志与 AGENTS.md |
+| `[tui]` | `max_tool_output_chars` / `max_tool_arguments_chars` / `mcp_max_tools` | 界面展示 |
+| `[tools]` | `runcli_timeout_seconds` / `runcli_max_output_chars` / `web_timeout_seconds` / `web_max_download_bytes` / `search_max_response_bytes` / `model_info_timeout_seconds` | 本地工具、抓取与元数据查询 |
+| `[search]` | `baidu_qianfan_api_key` / `api_url` / `top_k` / `timeout_seconds` | 百度千帆搜索 |
+| `[mcp]` | `enabled` / `config_path` / `connect_timeout` / `call_timeout` / `max_result_chars` / `shutdown_timeout` | MCP 连接 |
 
 环境变量优先级高于配置文件：
 
@@ -235,6 +264,172 @@ API 返回业务错误、响应不是合法 JSON、返回结果为空时，工�
 Function Calling 的结果向模型返回可读的错误信息，由模型转告用户，
 不会中断会话，也不会把 API Key 写入日志或 UI。
 
+## 启动时获取模型上下文窗口
+
+xAgent **不依赖本地配置猜测上下文窗口**。每次启动都会用当前 `[llm]` 的
+`base_url`、`api_key` 和 `model` 请求上游的 OpenAI 兼容模型列表：
+
+1. 请求 `GET {base_url}/models`；如果 `base_url` 以 `/v1` 结尾，还会兼容
+   `GET {origin}/models`；
+2. 按模型 id 找到当前模型，读取 `context_window`、`context_length`、
+   `max_model_len`、`max_input_tokens`、`n_ctx` 等常见字段，也支持
+   OpenRouter 风格的 `top_provider.context_length` 嵌套字段；
+3. 列表接口没有上下文长度时，再尝试 `GET {base_url}/models/{model}`；
+4. 成功时把窗口写入会话的 `ContextTracker`，侧栏显示如
+   `上下文窗口 1.0M tok（上游获取）`，会话区启动提示和 `/model` 显示完整数值与
+   实际请求的上游地址；
+5. 上游没有返回该字段或网络失败时，界面按 **128k** 计算占比并标注「默认」，
+   例如 `上下文 12.3k / 128k 默认  9%`；不会把 65536 之类的本地猜测值伪装成
+   上游数据，`/model` 仍会说明上游查询失败的原因。
+
+请求使用 `Authorization: Bearer <api_key>`，只读取模型元数据，不发送对话内容；
+错误信息只包含 HTTP 状态或连接原因，不会写入 API Key。
+
+## 上下文与缓存用量（getContextStats）
+
+对话框下方始终显示一行上下文状态，侧栏也会显示同样的大小 / 窗口 / 占比：
+
+```text
+上下文 ~12.3k / 1.0M  1%   |   缓存 命中 8.2k / 未命中 4.1k (66%)   |   消息 8
+```
+
+- **上下文**：当前对话（含系统提示词、用户输入、工具调用与工具结果）的 token
+  数 / 模型窗口大小与占比；模型供应商返回 `usage` 时 token 数是精确值，没有
+  返回时显示 `~` 表示本地估算。窗口来自上游模型信息，上游没有提供时显示
+  `128k 默认`。
+- **缓存**：本次会话累计的 Prompt 缓存命中 / 未命中 token 与命中率。数据来自
+  DeepSeek 的 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`，或 OpenAI
+  兼容接口的 `prompt_tokens_details.cached_tokens`；供应商不返回缓存字段时显示
+  “无数据”，不会把未知值当成 0。
+- **消息**：当前历史中的消息条数。
+
+适配器使用 `stream_options={"include_usage": true}` 请求流式用量；少数不支持该
+参数的 OpenAI 兼容服务会自动回退为普通流式请求，此时状态栏改用本地估算。
+上下文占用达到窗口的 **80%** 时，状态栏、侧栏和会话区会提示执行 `/compact`，
+并暂停接受新的普通提示词，直到压缩成功（斜杠命令仍然可用，否则无法压缩）。
+阈值 `context.warning_ratio`、默认窗口 `context.default_window`、摘要目标
+`context.summary_tokens` 都可以在 `config.ini` 中调整。
+
+`/context` 命令（或命令面板“查看上下文用量”）会在会话区输出详细数据：最近一次
+请求的输入 / 输出 / 推理 token、最近一次缓存命中、会话累计 token 与请求次数。
+模型需要判断是否接近上下文上限时，也可以调用 `getContextStats` 获取同样的统计。
+
+## 斜杠工具菜单（/）
+
+在输入框输入单个 `/`，composer 上方会弹出工具列表；继续输入会按命令名、标题、
+描述和关键词实时过滤。`↑` / `↓` 移动高亮，`Enter` 确认，`Esc` 关闭菜单
+（不会取消正在生成的回复）。也可以直接输入完整命令后回车。
+
+| 命令 | 行为 |
+| --- | --- |
+| `/new` | 自动保存当前会话并开始一个新会话（`/newsession` 同义） |
+| `/resume` | 弹出历史会话列表：↑↓ 选择、Enter 恢复、Esc 取消（`/sessions`、`/history` 同义） |
+| `/save` | 把当前会话写入 `.agents/sessions/<编号>.jsonl` 事件日志 |
+| `/session` | 显示当前会话编号、标题、消息数、日志路径与目录 |
+| `/rename <标题>` | 修改当前会话在历史列表中的标题 |
+| `/compact` | 先归档原始上下文，再调用模型生成约 5,000 Tokens 摘要替换历史（`/summarize`、`/compress` 同义） |
+| `/mcp` | 显示 MCP 服务器连接状态与每个服务器的可用工具 |
+| `/agents` | 查看 AGENTS.md 的路径、字符数与注入状态 |
+| `/refine <提示词>` | 调用模型润色提示词；结果回填输入框，由用户确认后再发送（`/polish` 同义） |
+| `/review [重点]` | 填入代码审查提示词，可补充审查重点，编辑后发送 |
+| `/init [要求]` | 填入扫描项目并生成/更新 `AGENTS.md` 的提示词 |
+| `/context` | 上下文窗口、最近请求与缓存命中明细 |
+| `/cost` | 本次会话累计输入 / 输出 / 缓存消耗（`/usage` 同义） |
+| `/model` | 当前模型、接口地址与上下文窗口 |
+| `/tools` | 列出模型可调用的全部 Function Calling 工具 |
+| `/help` | 命令与快捷键帮助 |
+| `/workspace` | 当前工作区路径 |
+| `/system` | 展开或收起系统提示词 |
+| `/clear` | 清空当前会话的界面、对话历史与用量统计（保留会话编号与 AGENTS.md） |
+| `/cancel` | 取消当前生成 |
+| `/quit` | 退出 xAgent（`/exit` 同义）；按配置自动保存当前会话 |
+
+### 会话保存、恢复与 `/new`
+
+每个会话对应 `.agents/sessions/<YYYYMMDD-HHMMSS>.jsonl` 事件日志：
+
+- 第一行是会话头（编号、创建/更新时间、标题、工作区、AGENTS.md 路径）；
+- 之后每条消息一行事件，保留角色、正文、工具调用参数、工具结果和顺序；
+- 写入采用「临时文件 + 原子替换」，进程中断不会留下半个会话。
+
+`/save` 显式保存；`/new` 先自动保存再切换新编号；`/resume` 读取目录下的日志，
+按更新时间倒序显示标题、编号、消息数和时间，选中后重建对话历史（System Prompt
+使用当前配置，其余消息原样恢复）。`/quit` 是否自动保存由 `sessions.save_on_exit`
+控制，`/new` 的自动保存由 `sessions.auto_save_on_new` 控制。
+
+### AGENTS.md（一次注入，全程复用）
+
+启动时如果项目根目录存在 `AGENTS.md`（文件名可通过 `sessions.agents_file`
+修改），xAgent 会在会话首次加载时把它作为**一条历史消息**追加到对话中，并在
+会话日志里持久化。后续轮次、`/compact` 压缩后以及 `/resume` 恢复时都直接复用
+这条消息（压缩会把 AGENTS.md 消息原样保留在新历史最前面），不会重复注入，
+从而保证 Prompt 缓存稳定。`/new` 会重新读取一次文件，适合在修改 AGENTS.md 后
+开始新会话。关闭注入可设置 `sessions.inject_agents_md = false`，内容长度上限由
+`max_agents_md_chars` 控制。
+
+
+
+### 上下文压缩、归档与检索（/compact + recallContext）
+
+上下文占用达到窗口的 **80%** 后，xAgent 会提示执行 `/compact` 并暂停接受新的
+普通提示词（斜杠命令仍可使用）。`/compact` 的执行顺序是固定的：
+
+1. **先归档**：把当前完整上下文（System Prompt、用户消息、助手回复、工具调用
+   参数、工具返回结果和顺序）写入项目本地的
+   `.agents/context/<归档编号>.jsonl`，一行一条消息，例如
+   `.agents/context/20261022-153000.jsonl`。编号为 `YYYYMMDD-HHMMSS`，同一秒
+   重复时追加 `-2`。归档采用「临时文件 + 原子替换」，**只有归档成功才会继续
+   压缩**；失败时直接报错，历史保持不变。
+2. **再摘要**：使用专用的上下文压缩 Prompt，把历史整理成约 5,000 Tokens 的
+   Markdown 工作摘要，重点保留用户目标、已完成工作、当前状态、关键技术信息、
+   关键决策和下一步任务。压缩请求**不携带任何工具**，因此压缩期间不会触发其他
+   Function Calling，也不会继续处理原有任务。
+3. **后替换**：System Prompt 和工具定义保持不变，摘要作为唯一的 user 消息写入
+   新历史，末尾追加归档说明（例如“此前上下文已于 2026-10-22 15:30:00 完成压缩，
+   原始上下文保存在编号为 20261022-153000 的归档文件中……请使用 recallContext
+   工具”），再加一条简短的 assistant 确认。压缩后的历史控制在约 5,000 Tokens。
+4. **对照面板**：压缩成功后弹出浮动面板，左栏显示压缩前原文、右栏显示压缩后
+   摘要，两栏都可以滚动，按 `Esc` 或点击「关闭」按钮退出。
+5. **失败回退**：模型没有返回摘要、请求失败或被取消时，保留原有上下文并报告
+   错误，可以重新执行 `/compact`。
+
+压缩成功后会解除输入限制，状态栏立即刷新为压缩后的规模。已经发生的 token /
+缓存消耗继续计入会话累计。会话区仍然保留压缩前的历史展示，方便回看。
+
+模型在后续对话中发现摘要缺少早期细节时，可以调用 `recallContext`：
+
+```json
+{"text": "estimate_text_tokens", "id": "20261022-153000"}
+```
+
+- `text`（必需）：关键词，可以用空格分隔多个词；
+- `id`（可选）：只检索指定归档；省略时检索 `.agents/context/` 下的所有归档。
+
+检索是纯本地的全文关键词匹配（不使用向量数据库或 Embedding）：逐行读取 JSONL，
+对消息正文、工具调用参数和工具结果做大小写无关的匹配，按「命中关键词数 + 出现
+次数」排序，返回归档编号、消息位置、角色和一段带上下文的片段。单次最多返回 6 条、
+总计约 4,000 字符，避免检索结果再次占满上下文；命中过多时会提示缩小关键词。
+
+### 提示词润色（/refine）
+
+`/refine 帮我看看这个文件` 会调用模型把草稿改写成更清晰、具体、可执行的提示词，
+保留原意，不回答草稿本身的问题。润色结果只回填输入框，不写入对话历史，也不会
+自动发送；失败时输入框会恢复原始草稿。先输入 `/` 再选择“润色提示词”时，菜单会
+自动把 `/refine ` 填入输入框，等用户补充内容后再回车。
+
+### 设计参考
+
+斜杠菜单和命令命名参考了主流 CLI Agent 的常见交互：
+
+- Cursor CLI 的 `/summarize`（`/compress` 别名）、`/model`、`/clear`、`/mcp`
+  等命令；
+- opencode 的 `/compact`、`/init`、`/new`、`/help` 等命令；
+- Claude Code 的 `/compact`、`/review`、`/cost`、`/context` 等命令。
+
+参考链接：[Cursor Slash commands](https://cursor.com/docs/cli/reference/slash-commands)、
+[opencode CLI](https://opencode.ai/docs/cli/)、
+[Claude Code Commands](https://code.claude.com/docs/en/commands)。
+
 ## 本地命令行（Runcil）
 
 模型需要运行本机已经安装的 CLI（如 `git`、`python`、`ffmpeg`）时，会调用 `Runcil`：
@@ -267,6 +462,25 @@ Function Calling 的结果向模型返回可读的错误信息，由模型转告
 xAgent 实现了 MCP Client：启动时连接外部 MCP Server，把服务器提供的工具注册为
 普通 Function Calling 工具，与 `Runcil`、`fetchWeb`、`loadSkill` 等本地工具统一参与
 Agent 的工具调用流程。
+
+### 异步加载与侧栏状态
+
+TUI 不再等待 MCP 连接完成：`build_agent` 只创建管理器，`FileAgent` 在首屏渲染后
+通过 `start_mcp()` 在后台线程连接服务器。侧栏固定显示 MCP 区域：
+
+```text
+MCP
+连接中...                # 正在后台连接
+demo  2 tools            # 已连接，显示工具名
+  demo__echo
+  demo__calc
+broken  失败
+  Connection refused     # 错误摘要
+```
+
+每个服务器最多展示 `tui.mcp_max_tools` 个工具名；`/mcp` 可查看完整列表。加载完成
+只刷新侧栏和追加提示，不会重新渲染整个会话区，也不影响首屏输入。连接失败只影响
+该服务器的工具，本地工具和其他服务器继续可用。
 
 ### 配置文件
 
@@ -532,14 +746,31 @@ You can also load additional files referenced by a skill.
 
 | 操作 | 说明 |
 | --- | --- |
-| `Enter` | 发送当前输入 |
-| `Esc` | 取消正在生成的一轮 |
+| `Enter` | 发送当前输入；斜杠菜单打开时确认高亮命令 |
+| `/` | 在空输入框中打开斜杠工具菜单 |
+| `↑` / `↓` | 斜杠菜单打开时移动高亮项 |
+| `Esc` | 关闭斜杠菜单；菜单关闭时取消正在生成的一轮 |
 | `Ctrl+L` | 清空界面与对话历史 |
 | `Ctrl+V` | 从系统剪贴板粘贴文本；多行会合并为单行；也支持 `Ctrl+Shift+V` / `Shift+Insert` |
 | `Ctrl+P` | 打开中文命令面板 |
 | `Ctrl+Q` | 退出 |
 | `/help` | 显示命令帮助 |
+| `/new` | 自动保存当前会话并新建会话 |
+| `/resume` | 打开历史会话列表，↑↓ 选择、Enter 恢复、Esc 取消 |
+| `/save` | 保存当前会话到 `.agents/sessions/` |
+| `/session` | 查看当前会话编号、标题与日志路径 |
+| `/rename` | 重命名当前会话 |
+| `/mcp` | 查看 MCP 服务器与工具状态 |
+| `/agents` | 查看 AGENTS.md 注入状态 |
+| `/compact` | 压缩当前上下文：先归档原文，再生成摘要替换历史；完成后弹出两栏对照面板 |
+| `/refine` | 润色提示词并回填输入框 |
+| `/review` | 填入代码审查提示词 |
+| `/init` | 填入 AGENTS.md 生成提示词 |
 | `/clear` | 清空会话 |
+| `/context` | 查看上下文 token、窗口占用与缓存命中明细 |
+| `/cost` | 查看本次会话累计消耗 |
+| `/model` | 查看当前模型信息 |
+| `/tools` | 查看模型可调用的工具列表 |
 | `/system` | 展开或收起系统提示词；清空后可用它重新显示 |
 | `/workspace` | 查看当前工作区 |
 | `/cancel` | 取消当前生成 |
@@ -572,6 +803,8 @@ You can also load additional files referenced by a skill.
 
 - 显示命令帮助
 - 查看系统提示词
+- 新建会话 / 恢复历史会话 / 保存当前会话
+- 压缩上下文
 - 清空对话
 - 取消当前生成
 - 查看当前工作区
@@ -588,10 +821,22 @@ Textual 自带的英文系统命令（Theme、Quit、Keys 等）已全部移除�
 
 ```python
 from dataclasses import asdict
-from core import TextDelta, ToolFinished, ToolStarted, TurnCompleted, build_agent, load_config
+from core import (
+    ContextStatsUpdated,
+    TextDelta,
+    ToolFinished,
+    ToolStarted,
+    TurnCompleted,
+    build_agent,
+    discover_model_metadata,
+    load_config,
+)
 
 config = load_config()
-agent = build_agent(config)
+# 上下文窗口必须来自当前模型的上游；Web / Desktop 也应在启动时查询一次。
+# 查询失败时核心按默认 128k 计算占比，界面应标注「默认」。
+model_metadata = discover_model_metadata(config.llm)
+agent = build_agent(config, model_metadata=model_metadata)
 
 async for event in agent.send("列出当前目录"):
     if isinstance(event, TextDelta):
@@ -600,6 +845,8 @@ async for event in agent.send("列出当前目录"):
         ...                       # 新建工具调用卡片
     elif isinstance(event, ToolFinished):
         ...                       # 更新卡片状态
+    elif isinstance(event, ContextStatsUpdated):
+        ...                       # 刷新上下文 / 缓存用量栏
     elif isinstance(event, TurnCompleted):
         ...                       # 收尾
     else:
@@ -643,7 +890,7 @@ core.agent ──► core.ports.ChatModel  ◄── core.llm.openai_chat (适�
 .\.venv\Scripts\ruff.exe check core tui tests
 ```
 
-当前：**167 个测试通过**（另有 1 个真实 MCP Server 测试默认跳过），Ruff 无告警。
+当前：**202 个测试通过**（另有 1 个真实 MCP Server 测试默认跳过），Ruff 无告警。
 
 真实 MCP Server 测试（需要联网）默认不运行，手动开启方式：
 
