@@ -2,98 +2,477 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>AnythingLLM 文档上传</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AnythingLLM 控制台 · 上传 / 向量化 / 对话</title>
 <style>
-  body { font-family: system-ui, "Microsoft YaHei", sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; color: #222; }
-  label { display: block; margin: 12px 0 4px; font-size: 14px; }
-  input[type=text] { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
-  button { margin-top: 16px; padding: 10px 22px; font-size: 15px; border: 0; border-radius: 4px; background: #2563eb; color: #fff; cursor: pointer; }
+  :root {
+    --bg: #f7f8fa; --card: #fff; --line: #e3e6ec; --text: #1f2430; --muted: #6b7280;
+    --blue: #2563eb; --green: #15803d; --red: #b91c1c; --amber: #b45309;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Microsoft YaHei", sans-serif;
+    max-width: 880px; margin: 0 auto; padding: 24px 16px 64px;
+    color: var(--text); background: var(--bg); line-height: 1.55;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  label { display: block; margin: 10px 0 4px; font-size: 13px; color: var(--muted); }
+  input[type=text], input[type=password], select, textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+    font-size: 14px; font-family: inherit; background: #fff; color: inherit;
+  }
+  textarea { resize: vertical; min-height: 88px; }
+  button {
+    padding: 8px 16px; font-size: 14px; border: 0; border-radius: 6px;
+    background: var(--blue); color: #fff; cursor: pointer;
+  }
+  button.secondary { background: #eef1f6; color: var(--text); }
   button:disabled { background: #9ca3af; cursor: not-allowed; }
-  #log { margin-top: 20px; padding: 12px; background: #f6f7f9; border-radius: 4px; font-size: 13px; white-space: pre-wrap; max-height: 420px; overflow: auto; }
-  .ok { color: #15803d; }
-  .err { color: #b91c1c; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row > * { flex: 0 0 auto; }
+  .row .grow { flex: 1 1 220px; }
+  #log { margin-top: 12px; font-size: 13px; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+  #log div { padding: 2px 0; }
+  .ok { color: var(--green); }
+  .err { color: var(--red); }
+  .warn { color: var(--amber); }
+  #chat { display: flex; flex-direction: column; gap: 10px; min-height: 120px; margin-bottom: 12px; }
+  .msg { padding: 10px 12px; border-radius: 8px; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { background: #eef2ff; align-self: flex-end; max-width: 85%; }
+  .msg.bot { background: #f3f4f6; align-self: flex-start; max-width: 92%; }
+  .msg.bot.streaming::after { content: "▍"; color: var(--muted); }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .sources { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .sources li { margin-left: 16px; }
+  .hidden { display: none !important; }
+  .badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: #eef1f6; color: var(--muted); }
+  @media (max-width: 560px) {
+    body { padding: 16px 12px 48px; }
+    .msg.user, .msg.bot { max-width: 100%; }
+  }
 </style>
 </head>
 <body>
-<h2>AnythingLLM 文档上传（自动向量化 → 第一个工作区）</h2>
 
-<label>服务器地址</label>
-<input type="text" id="host" value="http://localhost:3001">
+<h1>AnythingLLM 控制台</h1>
+<p class="sub">
+  单文件网页应用：<strong>选择工作区 → 上传并向量化 → 流式对话</strong>。
+  API Key 只存在本机浏览器 <code>localStorage</code>，不写入页面源码，也不会发往任何第三方。
+</p>
 
-<label>API Key</label>
-<input type="password" id="key" autocomplete="off" placeholder="在 AnythingLLM 设置页生成，填写后会自动记住到本机浏览器">
+<!-- 1. 连接 -->
+<section class="card">
+  <h2>1. 连接</h2>
+  <div class="row">
+    <div class="grow">
+      <label for="host">服务器地址</label>
+      <input type="text" id="host" value="http://localhost:3001" placeholder="http://localhost:3001">
+    </div>
+    <div class="grow">
+      <label for="key">API Key</label>
+      <input type="password" id="key" autocomplete="off" placeholder="AnythingLLM 设置页生成">
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <button id="btnConnect">连接并加载工作区</button>
+    </div>
+  </div>
+  <div id="connState" class="meta">尚未连接。</div>
+</section>
 
-<label>选择文档（可多选）</label>
-<input type="file" id="files" multiple>
+<!-- 2. 工作区 -->
+<section class="card">
+  <h2>2. 工作区</h2>
+  <div class="row">
+    <div class="grow">
+      <label for="workspace">当前工作区</label>
+      <select id="workspace" disabled>
+        <option value="">（先连接）</option>
+      </select>
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <button id="btnRefresh" class="secondary">刷新列表</button>
+    </div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <div class="grow">
+      <label for="newWs">新建工作区</label>
+      <input type="text" id="newWs" placeholder="例如：宠物医院知识库">
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <button id="btnCreateWs" class="secondary">创建</button>
+    </div>
+  </div>
+  <div id="wsState" class="meta">共 0 个工作区。</div>
+</section>
 
-<button id="btn">上传并嵌入</button>
-<div id="log"></div>
+<!-- 3. 上传 -->
+<section class="card">
+  <h2>3. 上传文档并向量化</h2>
+  <label for="files">选择文件（可多选）</label>
+  <input type="file" id="files" multiple>
+  <div class="row" style="margin-top:12px">
+    <button id="btnUpload">上传到当前工作区</button>
+    <button id="btnVectorize" class="secondary">向量化当前工作区</button>
+  </div>
+  <div id="log"></div>
+</section>
+
+<!-- 4. 对话 -->
+<section class="card">
+  <h2>4. 知识库对话（流式）</h2>
+  <div class="row" style="margin-bottom:12px">
+    <label style="margin:0" for="mode">模式</label>
+    <select id="mode" style="width:auto">
+      <option value="query">query · 只依据文档片段</option>
+      <option value="chat">chat · 结合会话历史</option>
+    </select>
+    <span class="badge" id="sessionBadge">会话：新</span>
+    <button id="btnClearChat" class="secondary">清空对话</button>
+  </div>
+  <div id="chat"></div>
+  <label for="question">提问</label>
+  <textarea id="question" placeholder="例如：接诊时第一步要登记什么？"></textarea>
+  <div class="row" style="margin-top:10px">
+    <button id="btnAsk">发送</button>
+    <button id="btnStop" class="secondary" disabled>停止</button>
+  </div>
+</section>
 
 <script>
+"use strict";
 const $ = (id) => document.getElementById(id);
-const KEY_STORE = "anythingllm.apiKey";
-$("host").value = localStorage.getItem("anythingllm.host") || $("host").value;
-$("key").value = localStorage.getItem(KEY_STORE) || "";
-const persist = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
-$("host").addEventListener("change", (e) => persist("anythingllm.host", e.target.value));
-$("key").addEventListener("change", (e) => persist(KEY_STORE, e.target.value.trim()));
-const log = (text, cls) => {
-  const p = document.createElement("div");
-  if (cls) p.className = cls;
-  p.textContent = text;
-  $("log").appendChild(p);
-  $("log").scrollTop = $("log").scrollHeight;
-};
+const STORE = { key: "anythingllm.apiKey", host: "anythingllm.host", ws: "anythingllm.workspace" };
 
-async function firstWorkspace(host, key) {
-  const res = await fetch(`${host}/api/v1/workspaces`, { headers: { Authorization: `Bearer ${key}` } });
-  if (!res.ok) throw new Error(`获取工作区列表失败: HTTP ${res.status}`);
-  const { workspaces } = await res.json();
-  if (!workspaces || !workspaces.length) throw new Error("没有找到任何工作区");
-  return workspaces[0];
+/* ---------- 本地状态 ---------- */
+const state = { workspaces: [], sessionId: null, controller: null, streaming: false };
+
+/* ---------- 工具函数 ---------- */
+const persist = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+const recall = (k) => { try { return localStorage.getItem(k) || ""; } catch (_) { return ""; } };
+
+function baseHost() {
+  return ($("host").value || "").trim().replace(/\/+$/, "");
+}
+function apiKey() {
+  return ($("key").value || "").trim();
+}
+function headers(json) {
+  const h = { Authorization: "Bearer " + apiKey() };
+  if (json) h["Content-Type"] = "application/json";
+  return h;
+}
+function log(text, cls) {
+  const div = document.createElement("div");
+  if (cls) div.className = cls;
+  div.textContent = text;          // 只用 textContent，杜绝 XSS
+  $("log").appendChild(div);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+function setBusy(busy) {
+  ["btnConnect", "btnRefresh", "btnCreateWs", "btnUpload", "btnVectorize", "btnAsk"].forEach((id) => {
+    $(id).disabled = busy;
+  });
+  $("btnStop").disabled = !busy || !state.streaming;
+}
+async function apiError(res) {
+  let detail = "";
+  try {
+    const body = await res.json();
+    detail = body.error || body.message || "";
+    if (typeof detail !== "string") detail = JSON.stringify(detail);
+  } catch (_) { /* 非 JSON 响应 */ }
+  return new Error(`HTTP ${res.status}${detail ? "：" + detail : ""}`);
 }
 
-async function upload(host, key, slug, file) {
+/* ---------- 1. 连接 / 工作区 ---------- */
+async function loadWorkspaces() {
+  const res = await fetch(baseHost() + "/api/v1/workspaces", { headers: headers(false) });
+  if (!res.ok) throw await apiError(res);
+  const data = await res.json();
+  state.workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
+  renderWorkspaces();
+}
+
+function renderWorkspaces() {
+  const select = $("workspace");
+  const previous = recall(STORE.ws);
+  select.textContent = "";
+  if (!state.workspaces.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "（没有工作区，请先创建一个）";
+    select.appendChild(opt);
+    select.disabled = true;
+  } else {
+    state.workspaces.forEach((ws) => {
+      const opt = document.createElement("option");
+      opt.value = ws.slug;
+      const count = Array.isArray(ws.documents) ? ws.documents.length : 0;
+      opt.textContent = `${ws.name || ws.slug}（${ws.slug}）· ${count} 个文档`;
+      select.appendChild(opt);
+    });
+    select.disabled = false;
+    if (previous && state.workspaces.some((ws) => ws.slug === previous)) select.value = previous;
+  }
+  $("wsState").textContent = `共 ${state.workspaces.length} 个工作区。`;
+}
+
+function currentSlug() {
+  const slug = $("workspace").value;
+  if (!slug) throw new Error("请先选择一个工作区");
+  return slug;
+}
+
+$("btnConnect").onclick = async () => {
+  persist(STORE.host, baseHost());
+  if (!apiKey()) return ($("connState").textContent = "请先填写 API Key。");
+  setBusy(true);
+  $("connState").textContent = "连接中……";
+  try {
+    await loadWorkspaces();
+    $("connState").className = "meta ok";
+    $("connState").textContent = `已连接 ${baseHost()}，加载到 ${state.workspaces.length} 个工作区。`;
+  } catch (e) {
+    $("connState").className = "meta err";
+    $("connState").textContent = "连接失败：" + e.message;
+  } finally {
+    setBusy(false);
+  }
+};
+
+$("btnRefresh").onclick = async () => {
+  setBusy(true);
+  try {
+    await loadWorkspaces();
+  } catch (e) {
+    $("wsState").className = "meta err";
+    $("wsState").textContent = "刷新失败：" + e.message;
+  } finally {
+    setBusy(false);
+  }
+};
+
+$("btnCreateWs").onclick = async () => {
+  const name = ($("newWs").value || "").trim();
+  if (!name) return log("请先填写工作区名称", "err");
+  setBusy(true);
+  try {
+    const res = await fetch(baseHost() + "/api/v1/workspace/new", {
+      method: "POST", headers: headers(true), body: JSON.stringify({ name }),
+    });
+    if (!res.ok) throw await apiError(res);
+    const body = await res.json();
+    const slug = (body.workspace && body.workspace.slug) || "";
+    log(`✓ 工作区已创建：${name}（${slug || "无 slug"}）`, "ok");
+    $("newWs").value = "";
+    await loadWorkspaces();
+    if (slug) { $("workspace").value = slug; persist(STORE.ws, slug); }
+  } catch (e) {
+    log("✗ 创建工作区失败：" + e.message, "err");
+  } finally {
+    setBusy(false);
+  }
+};
+
+$("workspace").onchange = () => {
+  persist(STORE.ws, $("workspace").value);
+  newSession();
+};
+
+/* ---------- 2. 上传 / 向量化 ---------- */
+async function uploadOne(slug, file) {
   const form = new FormData();
   form.append("file", file);
   form.append("addToWorkspaces", slug);
-  const res = await fetch(`${host}/api/v1/document/upload`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}` },
-    body: form,
+  const res = await fetch(baseHost() + "/api/v1/document/upload", {
+    method: "POST", headers: headers(false), body: form,
   });
+  if (!res.ok) throw await apiError(res);
   const body = await res.json();
-  if (!res.ok || body.success === false) throw new Error(body.error || `HTTP ${res.status}`);
-  const doc = body.documents && body.documents[0];
-  return doc ? `${doc.title}（${doc.wordCount} 词）` : "已上传";
+  if (body.success === false) throw new Error(body.error || "上传失败");
+  const doc = (body.documents || [])[0] || {};
+  return `${doc.title || file.name}${doc.wordCount ? `（${doc.wordCount} 词）` : ""}`;
 }
 
-$("btn").onclick = async () => {
-  const host = $("host").value.replace(/\/+$/, "");
-  const key = $("key").value.trim();
-  const files = [...$("files").files];
-  $("log").innerHTML = "";
+$("btnUpload").onclick = async () => {
+  let slug;
+  try { slug = currentSlug(); } catch (e) { return log("✗ " + e.message, "err"); }
+  const files = Array.from($("files").files || []);
   if (!files.length) return log("请先选择文件", "err");
 
-  $("btn").disabled = true;
-  try {
-    const ws = await firstWorkspace(host, key);
-    log(`目标工作区：${ws.name}（${ws.slug}）`);
-    for (const file of files) {
-      try {
-        log(`上传中：${file.name} ...`);
-        log(`  ✓ ${file.name} -> ${await upload(host, key, ws.slug, file)}`, "ok");
-      } catch (e) {
-        log(`  ✗ ${file.name} -> ${e.message}`, "err");
-      }
+  $("log").textContent = "";
+  setBusy(true);
+  let ok = 0, fail = 0;
+  for (const file of files) {
+    log(`上传中：${file.name} …`);
+    try {
+      log(`  ✓ ${file.name} → ${await uploadOne(slug, file)}`, "ok");
+      ok++;
+    } catch (e) {
+      log(`  ✗ ${file.name} → ${e.message}`, "err");
+      fail++;
     }
-    log("全部完成。");
+  }
+  setBusy(false);
+  log(`完成：成功 ${ok} 个，失败 ${fail} 个。上传后记得点「向量化当前工作区」。`, fail ? "warn" : "ok");
+};
+
+$("btnVectorize").onclick = async () => {
+  let slug;
+  try { slug = currentSlug(); } catch (e) { return log("✗ " + e.message, "err"); }
+  setBusy(true);
+  log(`正在触发向量化：${slug} …`);
+  try {
+    const res = await fetch(`${baseHost()}/api/v1/workspace/${encodeURIComponent(slug)}/update-embeddings`, {
+      method: "POST", headers: headers(true), body: "{}",
+    });
+    if (!res.ok) throw await apiError(res);
+    const body = await res.json();
+    log(`✓ 已触发向量化：${body.message || "后台处理中，稍等片刻再提问。"}`, "ok");
+    await loadWorkspaces();
   } catch (e) {
-    log(`错误：${e.message}`, "err");
+    log("✗ 向量化失败：" + e.message, "err");
   } finally {
-    $("btn").disabled = false;
+    setBusy(false);
   }
 };
+
+/* ---------- 3. 流式对话 ---------- */
+function newSession() {
+  state.sessionId = null;
+  $("sessionBadge").textContent = "会话：新";
+  $("chat").textContent = "";
+}
+
+function addMessage(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  $("chat").appendChild(div);
+  $("chat").scrollTop = $("chat").scrollHeight;
+  return div;
+}
+
+function appendSources(bubble, sources) {
+  if (!Array.isArray(sources) || !sources.length) return;
+  const box = document.createElement("div");
+  box.className = "sources";
+  box.textContent = "参考来源：";
+  const ul = document.createElement("ul");
+  sources.slice(0, 5).forEach((s) => {
+    const li = document.createElement("li");
+    li.textContent = `${s.title || "（无标题）"} · 相似度 ${typeof s.score === "number" ? s.score.toFixed(2) : "-"}`;
+    ul.appendChild(li);
+  });
+  box.appendChild(ul);
+  bubble.appendChild(box);
+}
+
+$("btnAsk").onclick = async () => {
+  let slug;
+  try { slug = currentSlug(); } catch (e) { return addMessage("bot", "✗ " + e.message); }
+  const question = ($("question").value || "").trim();
+  if (!question) return;
+
+  $("question").value = "";
+  addMessage("user", question);
+  const bubble = addMessage("bot", "");
+  bubble.classList.add("streaming");
+
+  state.controller = new AbortController();
+  state.streaming = true;
+  setBusy(true);
+
+  let answer = "";
+  try {
+    const res = await fetch(`${baseHost()}/api/v1/workspace/${encodeURIComponent(slug)}/stream-chat`, {
+      method: "POST",
+      headers: headers(true),
+      signal: state.controller.signal,
+      body: JSON.stringify({
+        message: question,
+        mode: $("mode").value,
+        sessionId: state.sessionId,
+        attachments: [],
+      }),
+    });
+    if (!res.ok) throw await apiError(res);
+    if (!res.body) throw new Error("当前浏览器不支持流式读取");
+
+    /* 解析 SSE：每条 `data: {json}` 一个事件 */
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n");
+      buffer = parts.pop();
+      for (const line of parts) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const raw = trimmed.slice(5).trim();
+        if (!raw || raw === "[DONE]") continue;
+        let event;
+        try { event = JSON.parse(raw); } catch (_) { continue; }
+        if (event.error) throw new Error(event.error);
+        if (event.id) {
+          state.sessionId = event.id;
+          $("sessionBadge").textContent = "会话：" + String(event.id).slice(0, 8);
+        }
+        if (typeof event.textResponse === "string") {
+          answer = event.textResponse;
+          bubble.textContent = answer;
+        } else if (event.textResponseChunk && typeof event.textResponseChunk === "string") {
+          answer += event.textResponseChunk;
+          bubble.textContent = answer;
+        }
+        if (event.sources) appendSources(bubble, event.sources);
+        $("chat").scrollTop = $("chat").scrollHeight;
+        if (event.close === true) break;
+      }
+    }
+    if (!answer) bubble.textContent = "（没有返回内容；确认文档已向量化后重试）";
+  } catch (e) {
+    if (e.name === "AbortError") {
+      bubble.textContent = (answer || "") + "\n\n（已停止生成）";
+    } else {
+      bubble.textContent = "✗ 请求失败：" + e.message;
+    }
+  } finally {
+    bubble.classList.remove("streaming");
+    state.streaming = false;
+    state.controller = null;
+    setBusy(false);
+  }
+};
+
+$("btnStop").onclick = () => {
+  if (state.controller) state.controller.abort();
+};
+
+$("btnClearChat").onclick = () => {
+  if (state.streaming && state.controller) state.controller.abort();
+  newSession();
+};
+
+/* ---------- 启动：回填本地保存的地址与 Key ---------- */
+(function boot() {
+  $("host").value = recall(STORE.host) || $("host").value;
+  $("key").value = recall(STORE.key) || "";
+  $("host").onchange = () => persist(STORE.host, baseHost());
+  $("key").onchange = () => persist(STORE.key, apiKey());
+  $("question").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("btnAsk").click(); }
+  });
+})();
 </script>
 </body>
 </html>
