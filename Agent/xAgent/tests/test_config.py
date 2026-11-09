@@ -198,6 +198,7 @@ def test_template_contains_all_sections() -> None:
         "[tools]",
         "[search]",
         "[mcp]",
+        "[logs]",
     ):
         assert section in CONFIG_TEMPLATE
 
@@ -263,6 +264,39 @@ def test_load_new_sections_and_defaults(
     assert config.tools.runcli_timeout_seconds == 12
     assert config.mcp.enabled is False
     assert config.mcp.to_settings().connect_timeout == 7
+
+
+def test_log_section_is_parsed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("XAGENT_API_KEY", raising=False)
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\napi_key = test-key\n"
+        "[logs]\n"
+        "enabled = false\n"
+        "level = debug\n"
+        "directory = .logs-custom\n"
+        "max_bytes = 4096\n"
+        "backup_count = 0\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.logs.enabled is False
+    assert config.logs.level == "DEBUG"
+    assert config.logs.directory == ".logs-custom"
+    assert config.logs.max_bytes == 4096
+    assert config.logs.backup_count == 0
+
+
+def test_invalid_log_level_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("XAGENT_API_KEY", raising=False)
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\napi_key = test-key\n[logs]\nlevel = TRACE\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigurationError, match="logs.level"):
+        load_config(path)
 
 
 def test_invalid_warning_ratio_is_rejected(

@@ -22,3 +22,6 @@ logs/
 # 上下文压缩归档与会话事件日志包含完整对话原文，属于本机数据
 .agents/context/
 .agents/sessions/
+
+# guizang-ppt-skill 为 AGPL-3.0 第三方技能，与仓库 MIT 许可不兼容，仅本机演示
+.agents/skills/guizang-ppt-skill/

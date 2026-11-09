@@ -130,6 +130,17 @@ connect_timeout = 20
 call_timeout = 60
 max_result_chars = 30000
 shutdown_timeout = 8
+
+[logs]
+# 是否把调用日志落盘到 <项目根目录>/<directory>/
+enabled = true
+# 文件日志级别：DEBUG / INFO / WARNING / ERROR（只影响文件，不影响界面）
+level = INFO
+# 日志目录（相对项目根目录）
+directory = .agents/logs
+# 单个日志文件大小上限（字节）与保留份数
+max_bytes = 2000000
+backup_count = 3
 """
 
 
@@ -260,6 +271,33 @@ class SessionSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class LogSettings:
+    """日志落盘配置（``[logs]``）。
+
+    日志写到 ``<项目根目录>/<directory>/xagent-<日期>.jsonl``，按大小轮转；
+    ``level`` 只影响文件，终端界面由 TUI 自己渲染，不会被日志刷屏。
+    """
+
+    enabled: bool = True
+    level: str = "INFO"
+    directory: str = ".agents/logs"
+    max_bytes: int = 2_000_000
+    backup_count: int = 3
+
+    def __post_init__(self) -> None:
+        if not self.directory.strip():
+            raise ConfigurationError("logs.directory 不能为空")
+        if self.level not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
+            raise ConfigurationError(
+                f"logs.level 必须是 DEBUG / INFO / WARNING / ERROR 之一：{self.level}"
+            )
+        if self.max_bytes < 1024:
+            raise ConfigurationError("logs.max_bytes 不能小于 1024")
+        if self.backup_count < 0:
+            raise ConfigurationError("logs.backup_count 不能为负数")
+
+
+@dataclass(frozen=True, slots=True)
 class TuiSettings:
     """仅影响界面展示的限额。"""
 
@@ -354,6 +392,7 @@ class AppConfig:
     tui: TuiSettings = field(default_factory=TuiSettings)
     tools: ToolsSettings = field(default_factory=ToolsSettings)
     mcp: McpConfigSettings = field(default_factory=McpConfigSettings)
+    logs: LogSettings = field(default_factory=LogSettings)
     config_path: Path | None = None
 
     def __post_init__(self) -> None:
@@ -442,6 +481,19 @@ def _positive_int(value: str, label: str, default: int) -> int:
     return number
 
 
+def _non_negative_int(value: str, label: str, default: int) -> int:
+    """允许 0 的整数（例如日志轮转份数 ``0`` 表示不备份）。"""
+    if not value:
+        return default
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise ConfigurationError(f"{label} 必须是整数：{value}") from exc
+    if number < 0:
+        raise ConfigurationError(f"{label} 不能为负数：{number}")
+    return number
+
+
 def _optional_positive_int(value: str, label: str) -> int | None:
     """解析可选上限：留空、0、none/unlimited/off 都表示不限制。"""
     text = (value or "").strip()
@@ -505,6 +557,48 @@ def _bounded_int(value: str, label: str, default: int, maximum: int) -> int:
     return number
 
 
+class _SectionReader:
+    """把「取 section 值 + 校验 + 拼错误前缀」的重复写法收敛到一处。
+
+    每个 ``[section]`` 对应一个实例；``label_prefix`` 用于生成与配置项同名的
+    错误信息（如 ``context.warning_ratio``），保持对用户可见的文案不变。
+    """
+
+    def __init__(self, values: dict[str, str], label_prefix: str = "") -> None:
+        self._values = values
+        self._prefix = label_prefix
+
+    def _raw(self, key: str) -> str:
+        return self._values.get(key, "")
+
+    def _label(self, key: str) -> str:
+        return f"{self._prefix}.{key}" if self._prefix else key
+
+    def text(self, key: str, default: str) -> str:
+        return self._raw(key) or default
+
+    def positive_int(self, key: str, default: int) -> int:
+        return _positive_int(self._raw(key), self._label(key), default)
+
+    def non_negative_int(self, key: str, default: int) -> int:
+        return _non_negative_int(self._raw(key), self._label(key), default)
+
+    def optional_positive_int(self, key: str) -> int | None:
+        return _optional_positive_int(self._raw(key), self._label(key))
+
+    def positive_float(self, key: str, default: float) -> float:
+        return _positive_float(self._raw(key), self._label(key), default)
+
+    def ratio(self, key: str, default: float) -> float:
+        return _ratio(self._raw(key), self._label(key), default)
+
+    def boolean(self, key: str, default: bool) -> bool:
+        return _bool(self._raw(key), self._label(key), default)
+
+    def bounded_int(self, key: str, default: int, maximum: int) -> int:
+        return _bounded_int(self._raw(key), self._label(key), default, maximum)
+
+
 def _resolve_workspace(
     value: str | Path | None,
     *,
@@ -551,162 +645,98 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _load_mcp_settings(section: dict[str, str]) -> McpConfigSettings:
+    reader = _SectionReader(section, "mcp")
     raw_enabled = os.getenv("XAGENT_MCP_ENABLED", "").strip().casefold()
     if raw_enabled:
         enabled = raw_enabled not in {"0", "false", "no", "off", "disabled"}
     else:
-        enabled = _bool(section.get("enabled", ""), "mcp.enabled", True)
+        enabled = reader.boolean("enabled", True)
     config_path = (
         os.getenv("XAGENT_MCP_CONFIG", "").strip()
-        or section.get("config_path", "").strip()
+        or reader.text("config_path", "")
         or None
     )
     return McpConfigSettings(
         enabled=enabled,
         config_path=config_path,
         connect_timeout=_env_float(
-            "XAGENT_MCP_CONNECT_TIMEOUT",
-            _positive_float(
-                section.get("connect_timeout", ""), "mcp.connect_timeout", 20.0
-            ),
+            "XAGENT_MCP_CONNECT_TIMEOUT", reader.positive_float("connect_timeout", 20.0)
         ),
         call_timeout=_env_float(
-            "XAGENT_MCP_CALL_TIMEOUT",
-            _positive_float(section.get("call_timeout", ""), "mcp.call_timeout", 60.0),
+            "XAGENT_MCP_CALL_TIMEOUT", reader.positive_float("call_timeout", 60.0)
         ),
         max_result_chars=_env_int(
-            "XAGENT_MCP_MAX_RESULT_CHARS",
-            _positive_int(
-                section.get("max_result_chars", ""), "mcp.max_result_chars", 30_000
-            ),
+            "XAGENT_MCP_MAX_RESULT_CHARS", reader.positive_int("max_result_chars", 30_000)
         ),
         shutdown_timeout=_env_float(
-            "XAGENT_MCP_SHUTDOWN_TIMEOUT",
-            _positive_float(
-                section.get("shutdown_timeout", ""), "mcp.shutdown_timeout", 8.0
-            ),
+            "XAGENT_MCP_SHUTDOWN_TIMEOUT", reader.positive_float("shutdown_timeout", 8.0)
         ),
     )
 
 
 def _load_context_settings(section: dict[str, str]) -> ContextSettings:
+    reader = _SectionReader(section, "context")
     return ContextSettings(
-        default_window=_positive_int(
-            section.get("default_window", ""),
-            "context.default_window",
-            _DEFAULT_CONTEXT_WINDOW,
+        default_window=reader.positive_int("default_window", _DEFAULT_CONTEXT_WINDOW),
+        warning_ratio=reader.ratio("warning_ratio", _DEFAULT_WARNING_RATIO),
+        summary_tokens=reader.positive_int("summary_tokens", _DEFAULT_SUMMARY_TOKENS),
+        archive_dir=reader.text("archive_dir", _DEFAULT_ARCHIVE_DIR),
+        max_recall_hits=reader.positive_int("max_recall_hits", 6),
+        max_recall_chars=reader.positive_int("max_recall_chars", 4_000),
+        max_message_transcript_chars=reader.positive_int(
+            "max_message_transcript_chars", 12_000
         ),
-        warning_ratio=_ratio(
-            section.get("warning_ratio", ""),
-            "context.warning_ratio",
-            _DEFAULT_WARNING_RATIO,
-        ),
-        summary_tokens=_positive_int(
-            section.get("summary_tokens", ""),
-            "context.summary_tokens",
-            _DEFAULT_SUMMARY_TOKENS,
-        ),
-        archive_dir=section.get("archive_dir", "").strip() or _DEFAULT_ARCHIVE_DIR,
-        max_recall_hits=_positive_int(
-            section.get("max_recall_hits", ""), "context.max_recall_hits", 6
-        ),
-        max_recall_chars=_positive_int(
-            section.get("max_recall_chars", ""), "context.max_recall_chars", 4_000
-        ),
-        max_message_transcript_chars=_positive_int(
-            section.get("max_message_transcript_chars", ""),
-            "context.max_message_transcript_chars",
-            12_000,
-        ),
-        max_tool_transcript_chars=_positive_int(
-            section.get("max_tool_transcript_chars", ""),
-            "context.max_tool_transcript_chars",
-            6_000,
-        ),
-        model_transcript_chars=_positive_int(
-            section.get("model_transcript_chars", ""),
-            "context.model_transcript_chars",
-            240_000,
-        ),
-        display_transcript_chars=_positive_int(
-            section.get("display_transcript_chars", ""),
-            "context.display_transcript_chars",
-            40_000,
-        ),
+        max_tool_transcript_chars=reader.positive_int("max_tool_transcript_chars", 6_000),
+        model_transcript_chars=reader.positive_int("model_transcript_chars", 240_000),
+        display_transcript_chars=reader.positive_int("display_transcript_chars", 40_000),
     )
 
 
 def _load_session_settings(section: dict[str, str]) -> SessionSettings:
+    reader = _SectionReader(section, "sessions")
     return SessionSettings(
-        directory=section.get("directory", "").strip() or _DEFAULT_SESSION_DIR,
-        save_on_exit=_bool(section.get("save_on_exit", ""), "sessions.save_on_exit", True),
-        auto_save_on_new=_bool(
-            section.get("auto_save_on_new", ""), "sessions.auto_save_on_new", True
-        ),
-        max_list=_positive_int(section.get("max_list", ""), "sessions.max_list", 50),
-        agents_file=section.get("agents_file", "").strip() or "AGENTS.md",
-        inject_agents_md=_bool(
-            section.get("inject_agents_md", ""),
-            "sessions.inject_agents_md",
-            True,
-        ),
-        max_agents_md_chars=_positive_int(
-            section.get("max_agents_md_chars", ""),
-            "sessions.max_agents_md_chars",
-            20_000,
-        ),
+        directory=reader.text("directory", _DEFAULT_SESSION_DIR),
+        save_on_exit=reader.boolean("save_on_exit", True),
+        auto_save_on_new=reader.boolean("auto_save_on_new", True),
+        max_list=reader.positive_int("max_list", 50),
+        agents_file=reader.text("agents_file", "AGENTS.md"),
+        inject_agents_md=reader.boolean("inject_agents_md", True),
+        max_agents_md_chars=reader.positive_int("max_agents_md_chars", 20_000),
     )
 
 
 def _load_tui_settings(section: dict[str, str]) -> TuiSettings:
+    reader = _SectionReader(section, "tui")
     return TuiSettings(
-        max_tool_output_chars=_positive_int(
-            section.get("max_tool_output_chars", ""),
-            "tui.max_tool_output_chars",
-            8_000,
-        ),
-        max_tool_arguments_chars=_positive_int(
-            section.get("max_tool_arguments_chars", ""),
-            "tui.max_tool_arguments_chars",
-            3_000,
-        ),
-        mcp_max_tools=_positive_int(
-            section.get("mcp_max_tools", ""), "tui.mcp_max_tools", 12
-        ),
+        max_tool_output_chars=reader.positive_int("max_tool_output_chars", 8_000),
+        max_tool_arguments_chars=reader.positive_int("max_tool_arguments_chars", 3_000),
+        mcp_max_tools=reader.positive_int("mcp_max_tools", 12),
+    )
+
+
+def _load_log_settings(section: dict[str, str]) -> LogSettings:
+    reader = _SectionReader(section, "logs")
+    return LogSettings(
+        enabled=reader.boolean("enabled", True),
+        level=reader.text("level", "INFO").upper(),
+        directory=reader.text("directory", ".agents/logs"),
+        max_bytes=reader.positive_int("max_bytes", 2_000_000),
+        backup_count=reader.non_negative_int("backup_count", 3),
     )
 
 
 def _load_tools_settings(section: dict[str, str]) -> ToolsSettings:
+    reader = _SectionReader(section, "tools")
     return ToolsSettings(
-        runcli_timeout_seconds=_positive_float(
-            section.get("runcli_timeout_seconds", ""),
-            "tools.runcli_timeout_seconds",
-            30.0,
+        runcli_timeout_seconds=reader.positive_float("runcli_timeout_seconds", 30.0),
+        runcli_max_output_chars=reader.positive_int("runcli_max_output_chars", 10_000),
+        web_timeout_seconds=reader.positive_float("web_timeout_seconds", 20.0),
+        web_max_download_bytes=reader.positive_int("web_max_download_bytes", 10 * 1024 * 1024),
+        search_max_response_bytes=reader.positive_int(
+            "search_max_response_bytes", 5 * 1024 * 1024
         ),
-        runcli_max_output_chars=_positive_int(
-            section.get("runcli_max_output_chars", ""),
-            "tools.runcli_max_output_chars",
-            10_000,
-        ),
-        web_timeout_seconds=_positive_float(
-            section.get("web_timeout_seconds", ""),
-            "tools.web_timeout_seconds",
-            20.0,
-        ),
-        web_max_download_bytes=_positive_int(
-            section.get("web_max_download_bytes", ""),
-            "tools.web_max_download_bytes",
-            10 * 1024 * 1024,
-        ),
-        search_max_response_bytes=_positive_int(
-            section.get("search_max_response_bytes", ""),
-            "tools.search_max_response_bytes",
-            5 * 1024 * 1024,
-        ),
-        model_info_timeout_seconds=_positive_float(
-            section.get("model_info_timeout_seconds", ""),
-            "tools.model_info_timeout_seconds",
-            10.0,
+        model_info_timeout_seconds=reader.positive_float(
+            "model_info_timeout_seconds", 10.0
         ),
     )
 
@@ -734,6 +764,7 @@ def load_config(
     tui_section = _section(parser, "tui")
     tools_section = _section(parser, "tools")
     mcp_section = _section(parser, "mcp")
+    logs_section = _section(parser, "logs")
 
     api_key = (
         os.getenv("XAGENT_API_KEY", "").strip()
@@ -763,32 +794,18 @@ def load_config(
         config_workspace = agent_section.get("workspace", "").strip() or None
     resolved_workspace = _resolve_workspace(config_workspace, config_path=path)
 
+    agent_reader = _SectionReader(agent_section)
     limits = AgentLimits(
-        max_tool_rounds=_optional_positive_int(
-            agent_section.get("max_tool_rounds", ""),
-            "max_tool_rounds",
+        max_tool_rounds=agent_reader.optional_positive_int("max_tool_rounds"),
+        max_text_bytes=agent_reader.positive_int("max_text_bytes", _DEFAULT_MAX_TEXT_BYTES),
+        default_max_chars=agent_reader.positive_int(
+            "default_max_chars", _DEFAULT_MAX_CHARS
         ),
-        max_text_bytes=_positive_int(
-            agent_section.get("max_text_bytes", ""),
-            "max_text_bytes",
-            _DEFAULT_MAX_TEXT_BYTES,
-        ),
-        default_max_chars=_positive_int(
-            agent_section.get("default_max_chars", ""),
-            "default_max_chars",
-            _DEFAULT_MAX_CHARS,
-        ),
-        max_list_items=_positive_int(
-            agent_section.get("max_list_items", ""),
-            "max_list_items",
-            _DEFAULT_MAX_LIST_ITEMS,
-        ),
+        max_list_items=agent_reader.positive_int("max_list_items", _DEFAULT_MAX_LIST_ITEMS),
     )
 
-    timeout_seconds = _positive_float(
-        llm_section.get("timeout_seconds", ""),
-        "timeout_seconds",
-        _DEFAULT_TIMEOUT_SECONDS,
+    timeout_seconds = _SectionReader(llm_section).positive_float(
+        "timeout_seconds", _DEFAULT_TIMEOUT_SECONDS
     )
     search_api_key = (
         os.getenv("XAGENT_BAIDU_QIANFAN_API_KEY", "").strip()
@@ -837,6 +854,7 @@ def load_config(
         tui=_load_tui_settings(tui_section),
         tools=_load_tools_settings(tools_section),
         mcp=_load_mcp_settings(mcp_section),
+        logs=_load_log_settings(logs_section),
         config_path=path,
     )
 
@@ -852,6 +870,7 @@ __all__ = [
     "ConfigurationError",
     "ContextSettings",
     "LLMSettings",
+    "LogSettings",
     "McpConfigSettings",
     "SearchSettings",
     "SessionSettings",

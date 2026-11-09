@@ -2,7 +2,7 @@
   "mcpServers": {
     "Bazi-MCP": {
       "type": "streamable_http",
-      "url": "https://mcp.api-inference.modelscope.net/476b45abed7446/mcp"
+      "url": "${BAZI_MCP_URL}"
     }
   }
 }

@@ -6,6 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 
 from core import (
     ConfigFileCreatedError,
@@ -13,6 +14,7 @@ from core import (
     XAgentError,
     __version__,
     build_agent,
+    configure_logging,
     discover_model_metadata,
     load_config,
 )
@@ -83,6 +85,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         mcp_settings = replace(mcp_settings, config_path=args.mcp_config)
     if args.no_mcp:
         mcp_settings = replace(mcp_settings, enabled=False)
+
+    # 调用日志落盘：目录不可写时降级为无日志，不影响启动。
+    log_path = configure_logging(config.logs, project_root=Path.cwd())
+    if log_path is not None:
+        print(f"调用日志：{log_path}", file=sys.stderr)
 
     # 上下文窗口等信息必须来自当前模型的上游接口，不能依赖本地配置。
     model_metadata = discover_model_metadata(

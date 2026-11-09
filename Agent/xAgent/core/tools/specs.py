@@ -31,6 +31,26 @@ FILE_TOOL_SPECS: tuple[ToolSpec, ...] = (
         },
     ),
     ToolSpec(
+        name="is_leap_year",
+        description=(
+            "判断某个年份是否为闰年。规则：能被 4 整除，且（不能被 100 整除 或 能被 "
+            "400 整除）。当用户询问「某年是不是闰年」「闰年有几天」「二月有没有 29 号」"
+            "时使用；不传 year 时按当前年份判断。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "year": {
+                    "type": "integer",
+                    "description": "要判断的年份，范围 1-9999；省略时使用当前年份",
+                    "minimum": 1,
+                    "maximum": 9999,
+                }
+            },
+            "additionalProperties": False,
+        },
+    ),
+    ToolSpec(
         name="list_directory",
         description="列出指定目录下的所有文件和子目录，可查看大小和修改时间。",
         parameters={

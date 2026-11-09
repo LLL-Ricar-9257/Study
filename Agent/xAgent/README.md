@@ -11,16 +11,10 @@
 - **Core / UI 分离**：`core` 不依赖 Textual、Rich，也不读写终端；`tui` 不直接操作文件或调用模型。
 - **事件流驱动**：核心通过 `AgentEvent` 异步流输出文本、工具调用、完成和错误状态；
   Textual、WebSocket、桌面端可以消费同一套事件。
-- **10 个文件工具 + 工作区外只读 + 系统时间工具 + 网页抓取 + 网络搜索 + 本地命令行 + Skill 加载/创建 + MCP 配置写入 + 上下文统计 + 历史归档检索**：列目录、读取、创建、编辑、删除、重命名、创建目录、识别文件类型，
-  获取当前日期、时间、时区和星期，用 `readExternalFile` 读取用户明确指定的
-  工作区外纯文本文件（只读），用 `fetchWeb` 抓取网页正文并转换为 Markdown，
-  用 `searchweb` 调用百度千帆 AI 搜索获取互联网实时信息，用 `Runcil`
-  运行本机已安装的任意 CLI 程序并返回 stdout / stderr / 退出码，用
-  `loadSkill` 按需加载 `.agents/skills` 中的 Agent Skill，用 `createSkill`
-  根据自然语言要求生成新的 Skill 骨架，用 `createMcp` 把用户给出的 MCP Server
-  配置校验后合并写入 `.mcp.json`，用 `getContextStats` 统计当前对话的 token、
-  上下文窗口占用和 Prompt 缓存命中情况，用 `recallContext` 在压缩前的原始
-  上下文归档中做本地关键词检索。
+- **10 个文件工具 + 时间工具（含闰年判定）+ `readExternalFile` 工作区外只读 + `fetchWeb` 网页抓取 +
+  `searchweb` 网络搜索 + `Runcil` 本地命令行 + `loadSkill` / `createSkill` +
+  `getContextStats` / `recallContext`**（完整清单见下方表格，共 21 个工具）；
+  普通文件操作限制在工作区内，`readExternalFile` 只提供用户明确要求时的只读例外。
 - **启动时从上游读取上下文窗口**：每次启动请求当前模型的 `/models` 元数据，
   读取 `context_window` 并写入状态栏与会话统计；上游没有返回时按 **128k 默认**
   计算占比，并在界面明确标注「默认」，不把默认值伪装成上游数据。
@@ -66,6 +60,39 @@
 - **可配置限额**：可选的单轮工具轮数上限（默认不限制）、文本读取上限、目录列出的最大条目数。
 - **安全默认值**：API Key 不会进入 `repr`、日志或 UI 事件；`config.ini` 已被 Git 忽略。
 - **核心可独立测试**：工具、Agent、配置和架构约束均可在无终端环境下测试，另有 TUI 冒烟测试。
+
+## 工具清单（共 21 个）
+
+模型可调用的全部工具都由 `core/tools/specs.py` 声明、由对应的工具类实现，
+`ToolRegistry` 在构造时校验"声明与实现一一对应"，缺一不可。下表与
+`tests/test_docs_consistency.py` 双向校验。
+
+| # | 工具 | 类别 | 说明 | 只读 |
+| --- | --- | --- | --- | --- |
+| 1 | `get_current_directory` | 时间 / 环境 | 返回受控工作区的绝对路径 | ✅ |
+| 2 | `get_current_datetime` | 时间 / 环境 | 当前日期、时间、星期、时区与 UTC | ✅ |
+| 3 | `is_leap_year` | 时间 / 环境 | 闰年判定（4 / 100 / 400 规则），缺省用当前年份 | ✅ |
+| 4 | `list_directory` | 文件 | 列出目录项，可递归，带大小与修改时间 | ✅ |
+| 5 | `get_file_type` | 文件 | 扩展名、MIME、文本/二进制、编码、魔数 | ✅ |
+| 6 | `read_text_file` | 文件 | 读纯文本，识别编码并截断 | ✅ |
+| 7 | `create_file` | 文件 | 原子创建文件，默认不覆盖 | ❌ |
+| 8 | `edit_text_file` | 文件 | overwrite / append / replace 三种模式 | ❌ |
+| 9 | `create_directory` | 文件 | 创建目录，默认递归建父目录 | ❌ |
+| 10 | `delete_directory` | 文件 | 递归删除目录（支持非空） | ❌ |
+| 11 | `delete_file` | 文件 | 删除文件 | ❌ |
+| 12 | `rename_path` | 文件 | 重命名文件或目录（兼容 Windows 仅改大小写） | ❌ |
+| 13 | `readExternalFile` | 文件 | 只读读取工作区之外的纯文本（需用户明确要求） | ✅ |
+| 14 | `fetchWeb` | 网络 | curl 抓取 + trafilatura 转 Markdown | ✅ |
+| 15 | `searchweb` | 网络 | 百度千帆 AI 搜索（摘要 + 标题 + URL） | ✅ |
+| 16 | `Runcil` | 系统 | 以参数列表方式执行本机 CLI，返回 stdout/stderr/退出码 | ❌ |
+| 17 | `loadSkill` | 技能 | 按需加载 SKILL.md 或技能内附件（限制在技能目录内） | ✅ |
+| 18 | `createSkill` | 技能 | 创建 `.agents/skills/<slug>/SKILL.md`，拒绝覆盖 | ❌ |
+| 19 | `createMcp` | MCP | 校验并合并写入 `.mcp.json` | ❌ |
+| 20 | `getContextStats` | 上下文 | token / 窗口占用 / 缓存命中统计 | ✅ |
+| 21 | `recallContext` | 上下文 | 在压缩前的历史归档里做本地关键词检索 | ✅ |
+
+另外，MCP Client 会把外部服务器的工具以前缀 `<服务器名>__<工具名>` 动态注册进同一集合，
+它们不占用上表的固定编号。
 
 ## 目录结构
 
@@ -190,6 +217,7 @@ Copy-Item config.example.ini config.ini
 | `[tools]` | `runcli_timeout_seconds` / `runcli_max_output_chars` / `web_timeout_seconds` / `web_max_download_bytes` / `search_max_response_bytes` / `model_info_timeout_seconds` | 本地工具、抓取与元数据查询 |
 | `[search]` | `baidu_qianfan_api_key` / `api_url` / `top_k` / `timeout_seconds` | 百度千帆搜索 |
 | `[mcp]` | `enabled` / `config_path` / `connect_timeout` / `call_timeout` / `max_result_chars` / `shutdown_timeout` | MCP 连接 |
+| `[logs]` | `enabled` / `level` / `directory` / `max_bytes` / `backup_count` | 调用日志落盘 |
 
 环境变量优先级高于配置文件：
 
@@ -557,24 +585,27 @@ broken  失败
 
 ### 使用示例
 
-在启动 xAgent 的目录创建 `.mcp.json`，例如本项目提供的 Bazi-MCP 配置：
+在启动 xAgent 的目录创建 `.mcp.json`，例如接入一个远程 Streamable HTTP MCP：
 
 ```json
 {
   "mcpServers": {
     "Bazi-MCP": {
       "type": "streamable_http",
-      "url": "https://mcp.api-inference.modelscope.net/476b45abed7446/mcp"
+      "url": "${BAZI_MCP_URL}"
     }
   }
 }
 ```
 
+其中 `${BAZI_MCP_URL}` 从同名环境变量展开；仓库里的 `.mcp.json` 只保留占位符，
+真实端点和访问令牌不要写进被提交的文件。
+
 启动后询问“用八字 MCP 查一下 2024-02-10 的农历信息”，模型会调用
 `Bazi-MCP__getChineseCalendar`，把工具返回的文本/JSON 结果再组织成回答。
 
-> `.mcp.json` 的 `headers` 可能包含访问令牌；提交到 Git 前请确认其中没有真实密钥，
-> 推荐改用 `${ENV_VAR}` 从环境变量读取。
+> `url` 与 `headers` 都可能包含访问令牌；提交到 Git 前请确认其中没有真实密钥，
+> 统一改用 `${ENV_VAR}` 从环境变量读取。
 
 ### 用自然语言写入配置（createMcp）
 
@@ -586,7 +617,7 @@ broken  失败
   "servers": {
     "Bazi-MCP": {
       "type": "streamable_http",
-      "url": "https://mcp.api-inference.modelscope.net/476b45abed7446/mcp"
+      "url": "${BAZI_MCP_URL}"
     },
     "local-demo": {
       "type": "stdio",
@@ -660,6 +691,12 @@ xAgent 支持 [Agent Skills](https://agentskills.io/) 约定。程序初始化�
 受控工作区相互独立。同名 Skill 以优先级高者为准（启动目录 > 工作区 > 自带目录）。
 把 Skill 放在仓库根的 `.agents/skills` 下，无论从哪个目录启动、指定哪个工作区，
 每次对话都能直接调用，不需要复制到每个项目里。
+
+> **第三方 Skill 的来源与许可**：自带目录里的 `officecli`、`tianjicesuan-1.0.0`
+> 是对第三方内容的封装，各自的来源/许可见对应目录下的 `SOURCE.md`；
+> `guizang-ppt-skill` 为 AGPL-3.0，与仓库 MIT 许可不兼容，已被 `.gitignore`
+> 排除、不随仓库分发。`officecli.exe` 二进制同样不入库，使用前需按
+> `officecli/SKILL.md` 自行放置。
 
 每个 Skill 子目录必须包含 `SKILL.md`，文件开头
 使用 YAML Frontmatter 声明 `name` 和 `description`：
@@ -815,6 +852,22 @@ Textual 自带的英文系统命令（Theme、Quit、Keys 等）已全部移除�
 搜索框提示和“没有匹配命令”的提示也已替换为中文。命令列表的选中态
 和鼠标悬停态只改变文字颜色，不绘制底色块。
 
+## 调用日志（[logs]）
+
+每次工具调用都会写一行 JSON 到 `.agents/logs/xagent-<YYYYMMDD>.jsonl`（按
+`max_bytes` 轮转、保留 `backup_count` 份）：
+
+```json
+{"ts":"2026-11-09T16:02:11+0800","level":"INFO","logger":"core.agent","msg":"tool_call",
+ "tool":"read_text_file","ok":true,"elapsed_ms":3,"round":0,"session":"20261109-160211"}
+```
+
+- **只记元数据**：工具名、成败、耗时、轮次、会话编号；参数与结果可能含隐私，不写入日志。
+- **敏感字段脱敏**：`api_key` / `authorization` / `token` / `password` 等键在序列化前替换为 `***`。
+- **只写文件不写终端**：TUI 独占终端，任何 console handler 都会打花界面。
+- **失败降级**：目录不可写时静默跳过日志，不影响 Agent 启动。
+- 启动时会在 stderr 打印本次日志路径；`[logs] enabled = false` 可完全关闭。
+
 ## 核心 API 与未来 UI
 
 任何新界面都只需要依赖 `core`，典型用法：
@@ -890,7 +943,9 @@ core.agent ──► core.ports.ChatModel  ◄── core.llm.openai_chat (适�
 .\.venv\Scripts\ruff.exe check core tui tests
 ```
 
-当前：**202 个测试通过**（另有 1 个真实 MCP Server 测试默认跳过），Ruff 无告警。
+当前测试数量以 `pytest -q` 的实时输出为准（其中真实 MCP Server 的联网测试默认跳过），
+不在此处写死数字，避免文档与代码漂移；`tests/test_docs_consistency.py` 会校验
+README 的工具清单与 `core/tools/specs.py` 双向一致。Ruff 要求无告警。
 
 真实 MCP Server 测试（需要联网）默认不运行，手动开启方式：
 

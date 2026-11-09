@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import time
 from collections.abc import AsyncIterator, Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -53,6 +54,8 @@ from .tools.types import ToolSpec
 
 if TYPE_CHECKING:
     from .mcp.manager import McpClientManager, McpServerSummary
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -572,6 +575,10 @@ class FileAgent:
                 del self._messages[turn_start:]
                 active_turn = False
                 self._context.refresh(self._messages)
+                logger.warning(
+                    "turn_failed",
+                    extra={"error": type(exc).__name__, "session": self._session_id},
+                )
                 yield ContextStatsUpdated(self._context.snapshot())
                 yield TurnFailed(
                     message=f"本轮对话失败：{exc}",
@@ -660,6 +667,17 @@ class FileAgent:
                     self._tools.execute, call.name, call.arguments
                 )
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
+                # 只记工具名、成败与耗时；参数和结果可能含隐私，不写日志。
+                logger.info(
+                    "tool_call",
+                    extra={
+                        "tool": call.name,
+                        "ok": result.ok,
+                        "elapsed_ms": elapsed_ms,
+                        "round": round_index,
+                        "session": self._session_id,
+                    },
+                )
                 self._messages.append(ChatMessage.tool(call.id, result.content))
                 yield ToolFinished(
                     call_id=call.id,

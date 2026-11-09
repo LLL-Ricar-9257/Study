@@ -12,6 +12,8 @@ metadata:
   author: computer
   version: '4.0'
   language: zh-CN
+  source: 第三方 Agent Skill（来源与许可未随包提供），仅作为 loadSkill 的演示样本
+  license: 未声明
 ---
 
 # 天机 · 综合命理测算

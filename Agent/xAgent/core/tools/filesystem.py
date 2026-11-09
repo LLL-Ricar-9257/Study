@@ -133,7 +133,7 @@ def encode_text(text: str, preferred: str = "utf-8") -> tuple[bytes, str]:
 
 
 class FileToolset:
-    """绑定工作区的 10 个文件工具和 1 个系统时间工具。"""
+    """绑定工作区的 12 个文件与时间工具（10 个文件操作 + 时间 + 闰年）。"""
 
     def __init__(self, workspace: str | Path, limits: AgentLimits | None = None) -> None:
         self.workspace = Workspace(workspace)
@@ -199,6 +199,41 @@ class FileToolset:
             f"星期：{weekdays[local.weekday()]}\n"
             f"时区：{tz_name} ({offset_text})\n"
             f"UTC 时间：{utc.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+    def is_leap_year(self, year: int | None = None) -> str:
+        """12. 判断某一年是否为闰年；未指定时使用当前年份。"""
+        if year is None:
+            target = datetime.now().year
+            note = f"（未指定年份，按当前年份 {target} 判断）\n"
+        else:
+            if isinstance(year, bool):
+                raise ToolError("year 必须是整数年份，不能是布尔值")
+            try:
+                target = int(year)
+            except (TypeError, ValueError) as exc:
+                raise ToolError(f"year 必须是整数年份：{year!r}") from exc
+            if not 1 <= target <= 9999:
+                raise ToolError(f"year 必须在 1-9999 之间：{target}")
+            note = ""
+
+        by_four = target % 4 == 0
+        by_hundred = target % 100 == 0
+        by_four_hundred = target % 400 == 0
+        leap = by_four and (not by_hundred or by_four_hundred)
+
+        if leap:
+            reason = "能被 400 整除" if by_hundred else "能被 4 整除且不是整百年"
+            verdict = f"{target} 年是闰年（{reason}，二月有 29 天）"
+        elif by_hundred:
+            verdict = f"{target} 年不是闰年（整百年份必须能被 400 整除）"
+        else:
+            verdict = f"{target} 年不是闰年（不能被 4 整除）"
+
+        return (
+            note
+            + verdict
+            + "\n判定规则：能被 4 整除，且（不能被 100 整除 或 能被 400 整除）。"
         )
 
     def list_directory(self, path: str = ".", recursive: bool = False) -> str:
@@ -521,6 +556,7 @@ class FileToolset:
         return {
             "get_current_directory": self.get_current_directory,
             "get_current_datetime": self.get_current_datetime,
+            "is_leap_year": self.is_leap_year,
             "list_directory": self.list_directory,
             "get_file_type": self.get_file_type,
             "read_text_file": self.read_text_file,
