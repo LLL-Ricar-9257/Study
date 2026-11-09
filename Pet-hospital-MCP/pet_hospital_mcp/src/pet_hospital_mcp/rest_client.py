@@ -1,10 +1,10 @@
 """Go 宠物医院 REST API 的 HTTP 客户端。
 
-職責邊界：**只做協議搬運**。請求組裝、超時、重試、響應信封拆解、
-錯誤歸類都在這裡；工具層只負責把參數交過來、把結果交回去。
+职责边界：**只做协议搬运**。请求组装、超时、重试、响应信封拆解、
+错误归类都在这里；工具层只负责把参数交过来、把结果交回去。
 
-後端地址來自 :class:`~pet_hospital_mcp.config.Settings`，本模塊不會自己
-讀環境變量，方便測試注入 :class:`httpx.MockTransport`。
+后端地址来自 :class:`~pet_hospital_mcp.config.Settings`，本模块不会自己
+读环境变量，方便测试注入 :class:`httpx.MockTransport`。
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from types import TracebackType
-from typing import Any, Final
+from typing import Any, Final, Self
 
 import httpx
 
@@ -26,19 +26,38 @@ from .errors import (
     PetHospitalMCPError,
 )
 
-__all__ = ["PetHospitalRestClient", "PETS_PATH"]
+__all__ = [
+    "PETS_PATH",
+    "STATS_PATH",
+    "PetHospitalRestClient",
+    "pet_detail_path",
+    "pet_summary_path",
+]
 
 logger = logging.getLogger(__name__)
 
 PETS_PATH: Final = "/api/v1/pets"
-"""``GET /api/v1/pets``——本服務唯一對接的後端端點。"""
+"""``GET /api/v1/pets``——列表查询端点。"""
+
+STATS_PATH: Final = "/api/v1/stats"
+"""``GET /api/v1/stats``——医院经营统计端点。"""
+
+
+def pet_detail_path(pet_id: str) -> str:
+    """``GET /api/v1/pets/{id}``——单个宠物档案。"""
+    return f"{PETS_PATH}/{pet_id}"
+
+
+def pet_summary_path(pet_id: str) -> str:
+    """``GET /api/v1/pets/{id}/summary``——单只宠物的费用与就诊汇总。"""
+    return f"{PETS_PATH}/{pet_id}/summary"
 
 _RETRYABLE_STATUS: Final = frozenset({408, 425, 429, 500, 502, 503, 504})
 _MAX_UPSTREAM_MESSAGE: Final = 300
 
 
 class PetHospitalRestClient:
-    """無狀態的異步 REST 客戶端；線程 / 协程安全，重試無副作用。"""
+    """无状态的异步 REST 客户端；线程 / 协程安全，重试无副作用。"""
 
     def __init__(
         self,
@@ -64,7 +83,7 @@ class PetHospitalRestClient:
         if self._owns_client:
             await self._client.aclose()
 
-    async def __aenter__(self) -> PetHospitalRestClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(
@@ -76,11 +95,23 @@ class PetHospitalRestClient:
         await self.aclose()
 
     async def list_pets(self, query: Mapping[str, str]) -> Any:
-        """調用 ``GET /api/v1/pets``，返回響應信封裡的 ``data``。"""
+        """调用 ``GET /api/v1/pets``，返回响应信封里的 ``data``。"""
         return await self._get(PETS_PATH, dict(query))
 
+    async def get_pet(self, pet_id: str) -> Any:
+        """调用 ``GET /api/v1/pets/{id}``，返回单个宠物档案的 ``data``。"""
+        return await self._get(pet_detail_path(pet_id), {})
+
+    async def get_pet_summary(self, pet_id: str) -> Any:
+        """调用 ``GET /api/v1/pets/{id}/summary``，返回费用与就诊汇总的 ``data``。"""
+        return await self._get(pet_summary_path(pet_id), {})
+
+    async def get_stats(self, top: int) -> Any:
+        """调用 ``GET /api/v1/stats?top=N``，返回医院经营统计的 ``data``。"""
+        return await self._get(STATS_PATH, {"top": str(top)})
+
     # ------------------------------------------------------------------
-    # 內部實現
+    # 内部实现
     # ------------------------------------------------------------------
     async def _get(self, path: str, query: Mapping[str, str]) -> Any:
         attempts = self._settings.max_retries + 1
@@ -90,8 +121,8 @@ class PetHospitalRestClient:
             retryable = False
             try:
                 response = await self._client.get(path, params=query)
-            except httpx.TimeoutException as exc:
-                # httpx.TimeoutException 是 TransportError 子類，必須先捕獲。
+            except httpx.TimeoutException:
+                # httpx.TimeoutException 是 TransportError 子类，必须先捕获。
                 last_error = BackendTimeoutError(
                     f"调用宠物医院 REST API 超时（{self._settings.request_timeout}s）",
                     details={"path": path, "attempt": attempt, "attempts": attempts},
@@ -125,11 +156,12 @@ class PetHospitalRestClient:
                 break
             await asyncio.sleep(self._settings.retry_backoff * (2 ** (attempt - 1)))
 
-        assert last_error is not None  # 循環內必然賦值或返回
+        if last_error is None:  # pragma: no cover - 循环至少执行一次，兜底防御
+            raise BackendUnavailableError(details={"path": path, "attempts": attempts})
         raise last_error
 
     def _unwrap(self, response: httpx.Response, path: str) -> Any:
-        """校驗並拆開 Go 的統一響應信封 ``{code, message, data, time}``。"""
+        """校验並拆开 Go 的统一响应信封 ``{code, message, data, time}``。"""
         if response.status_code >= 400:
             raise BackendApiError(
                 details={
@@ -179,7 +211,7 @@ def _message_of(payload: Mapping[str, Any]) -> str | None:
 
 
 def _upstream_message(response: httpx.Response) -> str | None:
-    """盡力從錯誤響應體裡取一句話；取不到就返回 None，絕不回傳整包內容。"""
+    """尽力从错误响应体里取一句话；取不到就返回 None，绝不回传整包内容。"""
     try:
         payload = response.json()
     except ValueError:

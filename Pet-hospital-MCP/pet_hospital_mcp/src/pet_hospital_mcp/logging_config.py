@@ -1,12 +1,12 @@
-"""結構化日誌與遞歸脫敏。
+"""结构化日志与递归脱敏。
 
-設計要點：
+设计要点：
 
-* 使用標準庫 ``logging`` + JSON Formatter，不引入 structlog；
-* 每次工具調用固定輸出一條記錄，包含 ``timestamp`` / ``tool_name`` /
+* 使用标准库 ``logging`` + JSON Formatter，不引入 structlog；
+* 每次工具调用固定输出一条记录，包含 ``timestamp`` / ``tool_name`` /
   ``params`` / ``status`` / ``duration_ms``；
-* :func:`redact` 會遞歸走訪任意結構，把 ``ownerPhone`` / ``ownerAddr`` /
-  ``chipNo`` 及其 snake_case 寫法替換成掩碼，且不依賴呼叫端自覺。
+* :func:`redact` 会递归遍历任意结构，把 ``ownerPhone`` / ``ownerAddr`` /
+  ``chipNo`` 及其 snake_case 写法替换成掩码，且不依赖调用方自觉。
 """
 
 from __future__ import annotations
@@ -21,13 +21,13 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 __all__ = [
+    "REDACTED",
+    "SENSITIVE_KEYS",
+    "ToolCallRecord",
     "configure_logging",
     "get_logger",
     "redact",
     "tool_call_scope",
-    "ToolCallRecord",
-    "SENSITIVE_KEYS",
-    "REDACTED",
 ]
 
 REDACTED: Final = "***"
@@ -39,7 +39,7 @@ SENSITIVE_KEYS: Final[frozenset[str]] = frozenset(
         "chipno",
     }
 )
-"""歸一化（小寫、去掉下劃線）後需要脫敏的字段名。"""
+"""归一化（小写、去掉下划线）后需要脱敏的字段名。"""
 
 _RESERVED: Final = frozenset(
     {
@@ -71,12 +71,12 @@ _RESERVED: Final = frozenset(
 
 
 def normalize_key(key: str) -> str:
-    """把字段名歸一化，用於大小寫 / 命名風格無關的比對。"""
+    """把字段名归一化，用于大小写 / 命名风格无关的比对。"""
     return key.replace("_", "").replace("-", "").lower()
 
 
 def redact(value: Any) -> Any:
-    """遞歸脫敏。命中敏感字段名的值替換為 :data:`REDACTED`，其餘結構原樣返回。"""
+    """递归脱敏。命中敏感字段名的值替换为 :data:`REDACTED`，其余结构原样返回。"""
     if isinstance(value, Mapping):
         result: dict[str, Any] = {}
         for key, item in value.items():
@@ -93,7 +93,7 @@ def redact(value: Any) -> Any:
 
 
 class JsonFormatter(logging.Formatter):
-    """把 LogRecord 渲染成單行 JSON。"""
+    """把 LogRecord 渲染成单行 JSON。"""
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
@@ -112,7 +112,7 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(level: str = "INFO", *, stream: Any = None) -> None:
-    """配置根 logger：單一 JSON handler，避免重複輸出。"""
+    """配置根 logger：单一 JSON handler，避免重复输出。"""
     root = logging.getLogger()
     for handler in list(root.handlers):
         root.removeHandler(handler)
@@ -120,7 +120,7 @@ def configure_logging(level: str = "INFO", *, stream: Any = None) -> None:
     handler.setFormatter(JsonFormatter())
     root.addHandler(handler)
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
-    # httpx 每個請求都打 INFO 日誌，會淹沒工具調用記錄。
+    # httpx 每个请求都打 INFO 日志，会淹没工具调用记录。
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
@@ -132,7 +132,7 @@ def get_logger(name: str) -> logging.Logger:
 
 @dataclass(slots=True)
 class ToolCallRecord:
-    """一次工具調用的日誌累加器。"""
+    """一次工具调用的日志累加器。"""
 
     tool_name: str
     params: dict[str, Any] = field(default_factory=dict)
@@ -148,7 +148,7 @@ class ToolCallRecord:
 def tool_call_scope(
     logger: logging.Logger, tool_name: str, params: Mapping[str, Any]
 ) -> Iterator[ToolCallRecord]:
-    """包住一次工具調用：無論成功失敗都輸出一條含耗時的結構化日誌。
+    """包住一次工具调用：无论成功失敗都输出一条含耗时的结构化日志。
 
     用法::
 
@@ -178,7 +178,7 @@ def tool_call_scope(
 
 
 def summarize_for_log(params: Mapping[str, Any], *, max_items: int = 10) -> dict[str, Any]:
-    """把參數整理成適合寫日誌的形狀：脫敏 + 列表截斷 + 去空。"""
+    """把参数整理成适合写日志的形状：脱敏 + 列表截断 + 去空。"""
     cleaned: dict[str, Any] = {}
     for key, value in redact(dict(params)).items():
         if value is None:

@@ -29,22 +29,33 @@ EXPECTED_QUERY_PARAMS = {
 }
 
 
-async def test_only_one_tool_is_registered(mcp_server) -> None:
-    """阶段一只暴露 list_pets，阶段二工具不得提前出现。"""
+async def test_tool_set_is_registered(mcp_server) -> None:
+    """四个只读工具全部注册，且顺序与 ``TOOL_NAMES`` 一致。"""
     tools = await mcp_server.list_tools()
-    assert [tool.name for tool in tools] == ["list_pets"]
-    assert TOOL_NAMES == ("list_pets",)
+    assert [tool.name for tool in tools] == [
+        "list_pets",
+        "get_pet",
+        "get_pet_summary",
+        "get_hospital_stats",
+    ]
+    assert TOOL_NAMES == tuple(tool.name for tool in tools)
 
 
-async def test_tool_name_is_snake_case(mcp_server) -> None:
-    tool = (await mcp_server.list_tools())[0]
-    assert tool.name == TOOL_NAME
-    assert re.fullmatch(r"[a-z0-9_]+", tool.name)
-    assert not re.search(r"[A-Z-]", tool.name)
+def _find(tools, name: str):
+    for tool in tools:
+        if tool.name == name:
+            return tool
+    raise AssertionError(f"未注册工具 {name}，实际：{[t.name for t in tools]}")
+
+
+async def test_tool_names_are_snake_case(mcp_server) -> None:
+    for tool in await mcp_server.list_tools():
+        assert re.fullmatch(r"[a-z0-9_]+", tool.name), tool.name
+        assert not re.search(r"[A-Z-]", tool.name), tool.name
 
 
 async def test_input_schema_shape(mcp_server) -> None:
-    tool = (await mcp_server.list_tools())[0]
+    tool = _find(await mcp_server.list_tools(), TOOL_NAME)
     schema = tool.input_schema
 
     assert schema["type"] == "object"
@@ -54,8 +65,13 @@ async def test_input_schema_shape(mcp_server) -> None:
     assert schema.get("required", []) == []
 
 
+async def test_every_tool_rejects_unknown_fields(mcp_server) -> None:
+    for tool in await mcp_server.list_tools():
+        assert tool.input_schema.get("additionalProperties") is False, tool.name
+
+
 async def test_input_schema_publishes_backend_enums(mcp_server) -> None:
-    props = (await mcp_server.list_tools())[0].input_schema["properties"]
+    props = _find(await mcp_server.list_tools(), TOOL_NAME).input_schema["properties"]
 
     assert props["species"]["anyOf"][0]["enum"] == ["犬", "猫", "兔", "鸟", "仓鼠", "爬宠", "其他"]
     assert props["status"]["anyOf"][0]["enum"] == [
@@ -76,13 +92,13 @@ async def test_input_schema_publishes_backend_enums(mcp_server) -> None:
 
 
 async def test_every_parameter_has_a_description(mcp_server) -> None:
-    props = (await mcp_server.list_tools())[0].input_schema["properties"]
-    for name, schema in props.items():
-        assert schema.get("description"), f"{name} 缺少 description"
+    for tool in await mcp_server.list_tools():
+        for name, schema in tool.input_schema["properties"].items():
+            assert schema.get("description"), f"{tool.name}.{name} 缺少 description"
 
 
 async def test_tool_description_covers_usage_params_scenarios_and_returns(mcp_server) -> None:
-    tool = (await mcp_server.list_tools())[0]
+    tool = _find(await mcp_server.list_tools(), TOOL_NAME)
     description = tool.description
 
     assert description == LIST_PETS_DESCRIPTION
@@ -94,17 +110,34 @@ async def test_tool_description_covers_usage_params_scenarios_and_returns(mcp_se
         assert f"`{name}`" in description
 
 
+async def test_new_tool_descriptions_document_endpoint_and_errors(mcp_server) -> None:
+    endpoints = {
+        "get_pet": "GET /api/v1/pets/{id}",
+        "get_pet_summary": "GET /api/v1/pets/{id}/summary",
+        "get_hospital_stats": "GET /api/v1/stats",
+    }
+    tools = await mcp_server.list_tools()
+    for name, endpoint in endpoints.items():
+        description = _find(tools, name).description
+        assert endpoint in description, f"{name} 未写明后端端点"
+        assert "适用场景" in description, name
+        assert "失败时返回统一错误结构" in description, name
+
+
 async def test_tool_annotations_declare_read_only(mcp_server) -> None:
-    annotations = (await mcp_server.list_tools())[0].annotations
-    assert annotations.read_only_hint is True
-    assert annotations.destructive_hint is False
-    assert annotations.idempotent_hint is True
+    for tool in await mcp_server.list_tools():
+        annotations = tool.annotations
+        assert annotations.read_only_hint is True, tool.name
+        assert annotations.destructive_hint is False, tool.name
+        assert annotations.idempotent_hint is True, tool.name
 
 
 async def test_server_metadata(mcp_server) -> None:
     assert mcp_server.name == SERVER_NAME
     assert mcp_server.version == SERVER_VERSION
     assert "list_pets" in (mcp_server.instructions or "")
+    for name in TOOL_NAMES:
+        assert f"`{name}`" in (mcp_server.instructions or "")
 
 
 def test_tool_function_is_async() -> None:

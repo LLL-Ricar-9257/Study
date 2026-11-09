@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import ValidationError as PydanticValidationError
 
 from pet_hospital_mcp.config import Settings
 from pet_hospital_mcp.errors import ErrorCode
@@ -161,7 +162,8 @@ async def test_success_output_matches_go_data(mcp_server) -> None:
 
 
 async def test_output_schema_is_published(mcp_server) -> None:
-    tool = (await mcp_server.list_tools())[0]
+    tools = await mcp_server.list_tools()
+    tool = next(tool for tool in tools if tool.name == "list_pets")
     assert tool.output_schema is not None
     assert set(tool.output_schema["properties"]) == {
         "items",
@@ -370,7 +372,7 @@ async def test_details_never_contain_upstream_body(make_client) -> None:
 # 输入模型本身的单元测试（不经 MCP 层）
 # ---------------------------------------------------------------------------
 def test_input_model_rejects_unknown_field() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(PydanticValidationError):
         ListPetsInput(unknown="x")
 
 

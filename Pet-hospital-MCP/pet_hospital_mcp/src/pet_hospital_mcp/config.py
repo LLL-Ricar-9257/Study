@@ -14,11 +14,12 @@
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-__all__ = ["Settings", "DEFAULT_PET_HOSPITAL_BASE_URL", "DEFAULT_MCP_HOST", "DEFAULT_MCP_PORT"]
+__all__ = ["DEFAULT_MCP_HOST", "DEFAULT_MCP_PORT", "DEFAULT_PET_HOSPITAL_BASE_URL", "Settings"]
 
 DEFAULT_PET_HOSPITAL_BASE_URL = "http://127.0.0.1:8080"
 DEFAULT_MCP_HOST = "127.0.0.1"
@@ -81,6 +82,6 @@ def _float(value: str | None, default: float, *, minimum: float) -> float:
         parsed = float(value.strip())
     except ValueError:
         return default
-    if parsed != parsed or parsed < minimum:  # NaN / 越界
+    if not math.isfinite(parsed) or parsed < minimum:  # NaN / inf / 越界
         return default
     return parsed

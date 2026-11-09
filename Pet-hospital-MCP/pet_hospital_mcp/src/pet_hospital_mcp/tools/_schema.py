@@ -19,12 +19,12 @@ from contextvars import ContextVar
 from typing import Any
 
 from mcp.server import MCPServer
-from pydantic import BaseModel, ConfigDict, ValidationError as PydanticValidationError
-from pydantic import create_model, model_validator
+from pydantic import BaseModel, ConfigDict, create_model, model_validator
+from pydantic import ValidationError as PydanticValidationError
 
 from ..errors import ValidationError
 
-__all__ = ["harden_tool_arguments", "take_deferred_input_error", "reject_bool"]
+__all__ = ["harden_tool_arguments", "reject_bool", "take_deferred_input_error"]
 
 _DEFERRED: ContextVar[str | None] = ContextVar("pet_hospital_mcp_deferred_error", default=None)
 
@@ -32,7 +32,8 @@ _DEFERRED: ContextVar[str | None] = ContextVar("pet_hospital_mcp_deferred_error"
 def reject_bool(value: Any) -> Any:
     """前置校验：``True`` / ``False`` 永远不是合法的数值入参。"""
     if isinstance(value, bool):
-        raise ValueError("布尔值不是合法的数值参数")
+        # Pydantic 只把 ValueError / AssertionError 当作校验失败，TypeError 会直接抛出。
+        raise ValueError("布尔值不是合法的数值参数")  # noqa: TRY004
     return value
 
 
@@ -80,7 +81,7 @@ def harden_tool_arguments(server: MCPServer, tool_name: str) -> dict[str, Any]:
     Raises:
         KeyError: 工具未注册。
     """
-    tool = server._tool_manager.get_tool(tool_name)  # noqa: SLF001 - SDK 未提供公开的取用入口
+    tool = server._tool_manager.get_tool(tool_name)
     if tool is None:
         raise KeyError(f"tool {tool_name!r} is not registered")
 

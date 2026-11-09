@@ -8,6 +8,7 @@ import re
 
 import httpx
 import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 
 from pet_hospital_mcp.logging_config import (
     REDACTED,
@@ -92,9 +93,8 @@ def test_tool_call_scope_records_failure(captured: pytest.LogCaptureFixture) -> 
 def test_tool_call_scope_logs_on_failure(captured: pytest.LogCaptureFixture) -> None:
     logger = get_logger("test.tool_call")
 
-    with pytest.raises(RuntimeError):
-        with tool_call_scope(logger, "list_pets", {}):
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), tool_call_scope(logger, "list_pets", {}):
+        raise RuntimeError("boom")
 
     payload = _render(captured.records[-1])
     assert payload["status"] == "crash"
@@ -130,7 +130,7 @@ async def test_error_log_does_not_include_upstream_body(
     client = make_client(fake)
     server = create_server(Settings(retry_backoff=0.0), client=client)
     try:
-        with pytest.raises(Exception):
+        with pytest.raises(ToolError):
             await server.call_tool("list_pets", {})
     finally:
         await client.aclose()

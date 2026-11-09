@@ -20,9 +20,9 @@ from pet_hospital_mcp.errors import ErrorCode
 from pet_hospital_mcp.server import PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION, build_app
 
 from .conftest import (
+    PROTOCOL_META_KEY,
     SAMPLE_PET_WITH_NULLS,
     FakeBackend,
-    PROTOCOL_META_KEY,
     make_envelope,
     make_list_data,
     mcp_client,
@@ -89,9 +89,16 @@ async def test_tools_list_without_initialize(mcp_app: Starlette) -> None:
     payload = response.json()
     assert "error" not in payload
     tools = payload["result"]["tools"]
-    assert [tool["name"] for tool in tools] == ["list_pets"]
-    assert tools[0]["inputSchema"]["additionalProperties"] is False
-    assert set(tools[0]["inputSchema"]["properties"]) >= {"q", "species", "page", "pageSize"}
+    assert [tool["name"] for tool in tools] == [
+        "list_pets",
+        "get_pet",
+        "get_pet_summary",
+        "get_hospital_stats",
+    ]
+    for tool in tools:
+        assert tool["inputSchema"]["additionalProperties"] is False, tool["name"]
+    list_pets = tools[0]["inputSchema"]["properties"]
+    assert set(list_pets) >= {"q", "species", "page", "pageSize"}
 
 
 async def test_no_session_id_header_in_response(mcp_app: Starlette) -> None:

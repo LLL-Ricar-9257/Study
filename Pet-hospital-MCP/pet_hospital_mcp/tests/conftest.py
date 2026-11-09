@@ -236,12 +236,11 @@ def mcp_app(settings: Settings, transport: httpx.MockTransport) -> Starlette:
 @asynccontextmanager
 async def mcp_client(app: Starlette) -> AsyncIterator[httpx.AsyncClient]:
     """进入 app 的 lifespan，给出可直接打 MCP 端点的客户端（无真实网络）。"""
-    async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
-            base_url="http://testserver",
-        ) as client:
-            yield client
+    async with app.router.lifespan_context(app), httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        yield client
 
 
 # ---------------------------------------------------------------------------

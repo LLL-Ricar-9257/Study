@@ -23,7 +23,7 @@
 | 传输 | **无状态 Streamable HTTP**（`stateless_http=True`, `json_response=True`） |
 | MCP 端点 | `POST http://127.0.0.1:8765/mcp` |
 | 健康检查 | `GET http://127.0.0.1:8765/health` |
-| 阶段一工具 | 只有 `list_pets` |
+| 已实现工具 | `list_pets` / `get_pet` / `get_pet_summary` / `get_hospital_stats`（**全部只读**） |
 
 > **无状态意味着什么**
 >
@@ -41,18 +41,23 @@ MCP 服务只是适配层，**必须先有后端在跑**。需要**两个终端�
 ### 1.1 有 Go（1.22+）
 
 ```bat
-cd /d E:\work\LLM\Pet-hospital-MCP\pet-hospital-mcp
+cd /d <仓库路径>\Pet-hospital-MCP\pet-hospital-mcp
 go run . -seed -count 2000
 ```
 
-### 1.2 没装 Go（用预编译发行包）
+### 1.2 没装 Go
 
-仓库里已经放好了编译好的 exe，直接跑：
+仓库**不提交编译产物**（`.gitignore` 忽略 `dist/`、`*.exe`），所以需要本机编译一次：
 
 ```bat
-cd /d E:\work\LLM\Pet-hospital-MCP\pet-hospital-mcp\dist\windows
-pethospital.exe
+cd /d <仓库路径>\Pet-hospital-MCP\pet-hospital-mcp
+go build -o dist\pethospital.exe .     :: Windows 64 位
+:: 或： make build   /   ./build.sh
+dist\pethospital.exe
 ```
+
+只想快速验证接口时，用 `go run . -seed -count 2000` 也可以（需要 Go 1.22+）。
+编译好的可执行文件与 `data/pet.db` 放在同一目录即可迁移，目标机无需安装 Go。
 
 > PowerShell 里同理，把 `cd` 换成 `Set-Location`，
 > 激活脚本用 `.\.venv\Scripts\Activate.ps1`（cmd 里要用 `activate.bat`，但见下方说明——其实不激活更省事）。
@@ -84,7 +89,7 @@ set PET_HOSPITAL_BASE_URL=http://127.0.0.1:18080
 要求 **Python 3.11+**。在 `pet_hospital_mcp\` 目录里：
 
 ```bat
-cd /d E:\work\LLM\Pet-hospital-MCP\pet_hospital_mcp
+cd /d <仓库路径>\Pet-hospital-MCP\pet_hospital_mcp
 
 python -m venv .venv
 
@@ -105,7 +110,7 @@ python -m venv .venv
 ## 3. 启动 MCP 服务（第二个终端窗口）
 
 ```bat
-cd /d E:\work\LLM\Pet-hospital-MCP\pet_hospital_mcp
+cd /d <仓库路径>\Pet-hospital-MCP\pet_hospital_mcp
 .venv\Scripts\python.exe -m pet_hospital_mcp
 ```
 
@@ -248,7 +253,7 @@ curl -s http://127.0.0.1:8765/mcp \
 仓库里带了现成的验证脚本（**端口不硬编码**，读同一套环境变量）：
 
 ```bat
-cd /d E:\work\LLM\Pet-hospital-MCP\pet_hospital_mcp
+cd /d <仓库路径>\Pet-hospital-MCP\pet_hospital_mcp
 .venv\Scripts\python.exe scripts\verify_client.py
 ```
 
@@ -327,7 +332,19 @@ npx @modelcontextprotocol/inspector
 
 ---
 
-## 5. `list_pets`
+## 5. 工具契约
+
+| 工具 | 对应后端端点 | 一句话用途 |
+| --- | --- | --- |
+| `list_pets` | `GET /api/v1/pets` | 过滤 / 排序 / 分页查询档案列表 |
+| `get_pet` | `GET /api/v1/pets/{id}` | 按编号取单只宠物完整档案（含病历与收费明细） |
+| `get_pet_summary` | `GET /api/v1/pets/{id}/summary` | 单只宠物的费用与就诊汇总 |
+| `get_hospital_stats` | `GET /api/v1/stats` | 全院经营统计、分布与消费排行榜 |
+
+四个工具共享同一套契约：入参 `additionalProperties: false`、输出为稳定的 Pydantic
+模型、失败返回同一个错误信封、每次调用写一条脱敏日志。
+
+### 5.1 `list_pets` — 列表查询
 
 对应后端 `GET /api/v1/pets`，只支持这 14 个查询参数，与后端一一对应，
 **没有**任何适配器私有参数：
@@ -366,7 +383,40 @@ min  max  sortBy  order  page  pageSize
 每条 `items` 里 `records` / `charges` **可能是 `null`**（Go 的空切片序列化成 `null`），
 也可能非 `null`；两种情况都原样保留，不会被改成 `[]`。
 
-### 错误
+### 5.2 `get_pet` — 按编号读单只档案
+
+对应后端 `GET /api/v1/pets/{id}`。
+
+| 参数 | 类型 | 约束 |
+| --- | --- | --- |
+| `pet_id` | string | 必填，`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`；含 `/`、`..`、空格或超长一律在本地拒绝，**不会**拼进 URL |
+
+返回值与 `list_pets` 的 `items[]` 完全一致（`records` / `charges` 可能为 `null`）。
+编号不存在时后端返回 404 → `BACKEND_API_ERROR`；编号格式非法 → `VALIDATION_ERROR`
+且不发出任何 HTTP 请求。
+
+### 5.3 `get_pet_summary` — 单只宠物的费用与就诊汇总
+
+对应后端 `GET /api/v1/pets/{id}/summary`。参数同上（`pet_id`）。
+
+返回字段：`totalCost` / `visitCount` / `chargeCount` / `costByCategory` /
+`costByDoctor` / `maxSingleCharge` / `avgCostPerVisit` / `firstVisit` /
+`lastVisit`，以及后端生成的自然语言病史 `historyText`（超过 4000 字符会截断并
+在末尾标注原始长度）。
+
+### 5.4 `get_hospital_stats` — 全院经营统计
+
+对应后端 `GET /api/v1/stats?top=N`。
+
+| 参数 | 类型 | 约束 |
+| --- | --- | --- |
+| `top` | integer | 可选，1–20，默认 5；消费排行榜返回条数 |
+
+返回字段：`totalPets` / `totalRecords` / `totalCharges` / `totalRevenue` /
+`averageCost` / `maxCost`、`bySpecies` / `byStatus` / `byDoctor` 分布、
+`revenueByDoctor` 医生创收、`topSpenders` 消费榜（完整档案数组）、`logGarbagePct`。
+
+### 5.5 错误
 
 所有失败（入参非法、后端超时、后端挂了、后端返回脏数据）都返回同一个结构：
 
@@ -393,7 +443,7 @@ min  max  sortBy  order  page  pageSize
 （前面带 SDK 自动加的 `Error executing tool list_pets: ` 前缀）。
 HTTPX / Pydantic / SDK / Python 堆栈**不会**出现在客户端可见的文本里。
 
-### 日志
+### 5.6 日志
 
 每次工具调用一行 JSON，字段固定：
 
@@ -414,22 +464,24 @@ HTTPX / Pydantic / SDK / Python 堆栈**不会**出现在客户端可见的文�
 **不需要启动 Go 服务，也不需要启动 MCP 服务**，测试全部走 `httpx.MockTransport`。
 
 ```bat
-cd /d E:\work\LLM\Pet-hospital-MCP\pet_hospital_mcp
+cd /d <仓库路径>\Pet-hospital-MCP\pet_hospital_mcp
 .venv\Scripts\python.exe -m pytest -q
+.venv\Scripts\ruff.exe check src tests scripts
 ```
 
-预期：
+预期（数字会随用例增加而变化，**以实际输出为准**）：
 
 ```text
 ........................................................................ [ 37%]
 ........................................................................ [ 75%]
 ..............................................                           [100%]
-190 passed in 1.81s
+全部通过
 ```
 
 ```bash
 pytest -q tests/test_stateless_http.py      # 只跑无状态 HTTP 流程
-pytest -q tests/test_list_pets_tool.py     # 只跑工具层
+pytest -q tests/test_list_pets_tool.py      # list_pets 工具层
+pytest -q tests/test_queries_tools.py       # get_pet / get_pet_summary / get_hospital_stats
 ```
 
 ---
@@ -455,12 +507,14 @@ pet_hospital_mcp/
 │       └── tools/
 │           ├── __init__.py      # register_tools()：新增工具挂在这里
 │           ├── _schema.py       # 入参收紧（拒绝未知字段）+ 统一校验错误
-│           └── list_pets.py     # 阶段一工具
+│           ├── list_pets.py     # 列表查询工具
+│           └── queries.py       # get_pet / get_pet_summary / get_hospital_stats
 └── tests/
     ├── conftest.py
     ├── test_config_and_errors.py
     ├── test_list_pets_tool.py
     ├── test_logging_config.py
+    ├── test_queries_tools.py
     ├── test_rest_client.py
     ├── test_stateless_http.py
     └── test_tool_registration.py
@@ -471,7 +525,8 @@ pet_hospital_mcp/
 1. 在 `src/pet_hospital_mcp/tools/` 新建模块，定义输入 / 成功输出模型；
 2. 写 `build_xxx_tool(client)` 工厂返回绑定 REST 客户端的协程；
 3. 在 `tools/__init__.py` 的 `register_tools()` 里调 `server.add_tool(...)`，
-   并调用 `harden_tool_arguments(server, "xxx")`；
+   并调用 `harden_tool_arguments(server, "xxx")`；同时把工具名加进 `TOOL_NAMES`
+   （测试直接断言这份清单）；
 4. 在 `rest_client.py` 里加一个对应的方法，复用超时 / 重试 / 错误归类；
 5. 照着 `list_pets` 抄测试。
 

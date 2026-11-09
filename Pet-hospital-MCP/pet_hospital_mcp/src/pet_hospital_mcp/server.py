@@ -35,11 +35,11 @@ from .rest_client import PetHospitalRestClient
 from .tools import register_tools
 
 __all__ = [
+    "PROTOCOL_VERSION",
     "SERVER_NAME",
     "SERVER_VERSION",
-    "PROTOCOL_VERSION",
-    "create_server",
     "build_app",
+    "create_server",
     "main",
 ]
 
@@ -50,8 +50,16 @@ SERVER_VERSION = "0.1.0"
 PROTOCOL_VERSION = LATEST_PROTOCOL_VERSION
 
 INSTRUCTIONS = """\
-本服务把宠物医院 REST API 暴露给 AI Agent，当前阶段只提供一个只读工具 `list_pets`
-（对应 `GET /api/v1/pets`）。
+本服务把宠物医院 REST API 暴露给 AI Agent，当前提供 4 个**只读**工具：
+
+- `list_pets`：按关键词/主人/种类/医生/疾病/状态过滤，排序分页返回档案列表
+  （对应 `GET /api/v1/pets`）；
+- `get_pet`：按档案编号读取单只宠物的完整档案，含全部病历与收费明细
+  （对应 `GET /api/v1/pets/{id}`）；
+- `get_pet_summary`：按档案编号读取该宠物的费用与就诊汇总
+  （对应 `GET /api/v1/pets/{id}/summary`）；
+- `get_hospital_stats`：读取全院经营统计、分布与消费排行榜
+  （对应 `GET /api/v1/stats`）。
 
 调用方式：直接向 `/mcp` 发起 POST，携带 `MCP-Protocol-Version: 2026-07-28` 与
 `Mcp-Method` 头，请求体 `params._meta` 里放

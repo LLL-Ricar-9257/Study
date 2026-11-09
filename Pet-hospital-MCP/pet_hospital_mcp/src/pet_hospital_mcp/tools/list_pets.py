@@ -20,8 +20,8 @@ from typing import Annotated, Any, Final, Literal, get_args
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
-from pydantic import BeforeValidator, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import ValidationError as PydanticValidationError
 
 from ..errors import (
     BackendInvalidResponseError,
@@ -35,18 +35,18 @@ from ..rest_client import PetHospitalRestClient
 from ._schema import harden_tool_arguments, reject_bool, take_deferred_input_error
 
 __all__ = [
-    "TOOL_NAME",
     "LIST_PETS_DESCRIPTION",
-    "SPECIES",
-    "STATUS",
+    "QUERY_PARAM_NAMES",
     "SORT_FIELDS",
     "SORT_ORDERS",
-    "QUERY_PARAM_NAMES",
+    "SPECIES",
+    "STATUS",
+    "TOOL_NAME",
     "Charge",
+    "ListPetsInput",
     "MedicalRecord",
     "Pet",
     "PetListData",
-    "ListPetsInput",
     "build_list_pets_tool",
     "register_list_pets",
 ]
@@ -290,7 +290,7 @@ class ListPetsInput(BaseModel):
         return {key: raw[key] for key in QUERY_PARAM_NAMES if raw[key] is not None}
 
 
-def _format_number(value: float | int | None) -> str | None:
+def _format_number(value: float | None) -> str | None:
     if value is None:
         return None
     if isinstance(value, int):
@@ -320,10 +320,10 @@ def build_list_pets_tool(
             str | None, Field(description="全文模糊关键词，跨姓名/品种/主人/医生/疾病等字段")
         ] = None,
         name: Annotated[str | None, Field(description="宠物姓名模糊匹配")] = None,
-        ownerName: Annotated[  # noqa: N803 - 与后端查询参数同名，属于契约的一部分
+        ownerName: Annotated[
             str | None, Field(description="主人姓名模糊匹配")
         ] = None,
-        ownerPhone: Annotated[  # noqa: N803
+        ownerPhone: Annotated[
             str | None, Field(description="主人电话模糊匹配")
         ] = None,
         species: Annotated[
@@ -336,17 +336,17 @@ def build_list_pets_tool(
             PetStatus | None,
             Field(description="就诊状态精确匹配：" + "/".join(STATUS)),
         ] = None,
-        min: Annotated[  # noqa: A002
+        min: Annotated[
             float | None,
             BeforeValidator(reject_bool),
             Field(ge=0, description="在医院总花费下限（元），非负"),
         ] = None,
-        max: Annotated[  # noqa: A002
+        max: Annotated[
             float | None,
             BeforeValidator(reject_bool),
             Field(ge=0, description="在医院总花费上限（元），不得小于 min"),
         ] = None,
-        sortBy: Annotated[  # noqa: N803
+        sortBy: Annotated[
             SortField | None,
             Field(description="排序字段：" + "/".join(SORT_FIELDS) + "；不传按 createdAt 倒序"),
         ] = None,
@@ -356,7 +356,7 @@ def build_list_pets_tool(
             BeforeValidator(reject_bool),
             Field(ge=1, description="页码，从 1 开始"),
         ] = None,
-        pageSize: Annotated[  # noqa: N803
+        pageSize: Annotated[
             int | None,
             BeforeValidator(reject_bool),
             Field(ge=1, le=500, description="每页条数，1-500；不传时后端默认 20"),
