@@ -32,10 +32,8 @@ Study/
 │   │   ├── chat_file_tools.py      # 10 个文件 / 目录操作工具
 │   │   └── config.ini              # 本地配置（已 gitignore，不提交）
 │   └── xAgent/                     # Core/TUI 分层重构版
-│       ├── .agents/skills/         # 自带 Agent Skill（SKILL.md + 附件）
 │       ├── core/                   # 业务核心：Agent、工具、配置、事件流
 │       ├── tui/                    # Textual 终端界面
-│       ├── tests/                  # 核心与 TUI 测试
 │       ├── docs/                   # 架构说明与界面预览
 │       ├── config.example.ini
 │       └── pyproject.toml
@@ -381,11 +379,10 @@ py -3.11 -m venv .venv
 # 首次启动会在当前目录生成 config.ini，填入 [llm] api_key 后重启
 ```
 
-**验证：**
+**静态检查：**
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q   # 数量以实时输出为准（联网 MCP 测试默认跳过）
-.\.venv\Scripts\ruff.exe check core tui tests scripts
+.\.venv\Scripts\ruff.exe check core tui scripts
 ```
 
 详细架构与扩展方式见 [`Agent/xAgent/README.md`](Agent/xAgent/README.md)
@@ -402,7 +399,7 @@ py -3.11 -m venv .venv
 | `pet_hospital_mcp` | Python MCP 适配层（无需 Go 后端） | `ruff check src tests scripts` + `pytest -q` |
 | `pet-hospital-mcp` | Go 后端编译与自带测试 | `go vet ./...` + `go test ./...` |
 | `AnythingLLMMCP` | AnythingLLM MCP（MockTransport） | `ruff check .` + `pytest -q` |
-| `xAgent` | 核心 + TUI + 文档一致性 | `ruff check` + `pytest -q` |
+| `xAgent` | 源码静态检查 | `ruff check core tui scripts` |
 
 本地复现单个 job 的命令与上表一致，都在对应子目录执行。
 
@@ -443,7 +440,7 @@ py -3.11 -m venv .venv
 >
 > 其余项目 —— Python MCP 服务（`pet_hospital_mcp/`）、`AnythingLLMMCP/`、
 > `AnythingLLMSever/`、`Agent/` —— 为课程作业中在讲师提供的示例基础上自行开发完成。
-> 其中 `Agent/xAgent/.agents/skills/` 下是对第三方 Skill 的封装，来源与许可见各目录的
-> `SOURCE.md`；AGPL-3.0 的 `guizang-ppt-skill` 已被 `.gitignore` 排除、不随仓库分发。
+> `Agent/xAgent` 不随仓库分发示例 Skill 包；如需使用，请在启动目录或工作区自行放置
+> `.agents/skills/<name>/SKILL.md`，第三方内容请遵循其原始许可。
 >
 > 如需二次分发该 Go 后端部分，请一并遵守其 MIT 许可条款并保留原作者署名。

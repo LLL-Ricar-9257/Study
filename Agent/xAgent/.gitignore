@@ -23,5 +23,8 @@ logs/
 .agents/context/
 .agents/sessions/
 
-# guizang-ppt-skill 为 AGPL-3.0 第三方技能，与仓库 MIT 许可不兼容，仅本机演示
-.agents/skills/guizang-ppt-skill/
+# Skill 包属于本机/工作区数据，仓库不随附示例 Skill，也不跟踪本地 Skill
+.agents/skills/
+
+# 测试仅保留在本机，不随仓库分发
+tests/

@@ -195,8 +195,8 @@
 
 `SkillsCatalog` 在启动时按优先级扫描三个根目录下的 `.agents/skills/*/SKILL.md`：
 启动目录（`build_agent` 调用时的当前工作目录）→ `--workspace` 工作区 →
-xAgent 自带目录（`core` 包上一级的 `.agents/skills`，扫描根由
-`skills.bundled_root()` 给出）；同名 Skill 以先生效者为准，重复的根目录
+项目根（`core` 包上一级的 `.agents/skills`，扫描根由 `skills.bundled_root()` 给出；
+本仓库不随附示例 Skill，目录不存在时自动跳过）；同名 Skill 以先生效者为准，重复的根目录
 只扫描一次。它只读取到 Frontmatter 结束分隔符为止，解析必需的
 `name` / `description`，跳过格式不合法、缺少字段或重名的 Skill，并把原因记录在
 `issues` 中。`SKILL.md` 正文不会在初始化阶段进入上下文。除 Frontmatter 中的
@@ -376,7 +376,7 @@ TUI 启动时会把 `FileAgent.system_prompt` 渲染为可折叠的 `SystemPromp
 2. 在 `core/tools/specs.py` 添加 `ToolSpec`，并加入 `ALL_TOOL_SPECS`；
 3. 在 toolset 的 `registry_handlers()` 注册方法名；
 4. 在 `core/bootstrap.py` 组装新的 toolset；
-5. 在 `tests/` 增加对应测试。
+5. 在本地补充验证（仓库不随附测试目录）。
 
 `ToolRegistry` 会在构造时检查声明和实现是否一一对应。
 
@@ -466,21 +466,14 @@ Skill 是内容扩展，通常不需要改代码：
 注意：取消只回滚对话历史，不撤销已完成的文件系统副作用。这是文件工具本身的语义，
 UI 会展示每个工具的执行结果。
 
-## 7. 测试策略
+## 7. 验证方式
 
-- `tests/test_filesystem_tools.py`：文件工具与时间工具、路径越界、覆盖保护、注册表错误。
-- `tests/test_external_file_tool.py`：工作区外只读、相对/绝对路径、编码识别、截断、大小限制、目录/二进制/非法路径拒绝与注册，并确认普通文件工具仍受沙箱限制。
-- `tests/test_web_tool.py`：网页抓取、Markdown 转换、URL 校验、超时/失败/解析异常、截断和注册。
-- `tests/test_search_tool.py`：搜索请求构造、摘要/标题/URL 输出、缺少 Key、HTTP/API/网络/解析错误、截断和注册。
-- `tests/test_runcli_tool.py`：参数列表执行、`shell=False`、非零退出码、超时、输出截断、缺少程序、参数校验、注册与真实子进程。
-- `tests/test_skills.py`：Skill 发现与 Frontmatter、提示词注入、按需加载、相对/项目/绝对路径、递归唯一匹配、同名候选、越界拒绝与注册；以及 `createSkill` 的名称规范化、Frontmatter 生成/保留、已存在拒绝覆盖和参数校验。
-- `tests/test_agent.py`：工具循环、无上限多轮工具调用、可选轮数上限、模型失败回滚、并发拒绝、关闭。
-- `tests/test_context.py`：token 估算、上下文 / 缓存累计、无 usage 的估算兜底、清空重置、DeepSeek / OpenAI usage 字段解析、流式适配器的 `stream_options` 回退、`getContextStats` 报告与注册、`ContextStatsUpdated` 事件、失败回滚后的重新估算、上游窗口未知时按 128k 默认计算占比、80% 阈值警告与普通提示词暂停、压缩前 JSONL 归档与归档说明、压缩失败保留历史、`recallContext` 的归档 / 关键词检索 / 位置返回 / 结果截断，以及 `/compact` 的摘要替换、`/refine` 的独立请求与历史不变。
-- `tests/test_model_metadata.py`：DeepSeek 扁平字段、OpenRouter 嵌套字段、`/models/{model}` 回退、主机名大小写归一化、真实 HTTP 请求与 Authorization 头、缺少上下文窗口时不伪造 0、错误信息不泄漏 API Key。
-- `tests/test_slash.py`：斜杠命令别名、精确名称优先的过滤顺序、中文关键词匹配、模板生成和帮助文本。
-- `tests/test_session.py`：会话事件日志的保存 / 读取 / 列表、JSONL 结构、AGENTS.md 首轮注入一次、`/save` 持久化注入事件、恢复会话不重复注入、`/new` 重新读取 AGENTS.md 且空会话不落盘。
-- `tests/test_config.py`：配置优先级、完整模板小节、当前目录自动生成配置并抛错、新配置小节与默认值、`warning_ratio` 校验、CLI 创建配置后的对话框、可选工具轮数上限、相对工作区、Key 隐藏、错误配置。
-- `tests/test_architecture.py`：core 不得依赖 Textual/Rich，事件契约公开。
-- `tests/test_mcp.py`：`.mcp.json` 解析（两种传输、环境变量展开、非法类型/字段）、工具前缀与冲突处理、Schema 清洗、文本/结构化/错误/截断结果格式化；用临时 stdio MCP Server 做端到端连接、工具注册、调用转发、server 错误与单服务器故障隔离；异步模式下 `build_agent` 构造完成时未注册工具、`start_mcp()` 后动态注册并返回服务器摘要与工具名；同步模式仍可注入系统提示词；另有一个通过 `XAGENT_MCP_LIVE_TEST=1` 开启的真实 Streamable HTTP 测试。
-- `tests/test_mcp_config_tool.py`：`createMcp` 的新建/合并写入、保留其他顶层字段、旧 `mcp_servers` 键、覆盖保护与 `overwrite=true`、非法服务器配置与损坏 JSON 时零改动、空/重名服务器名、`${VAR}` 原样保留、不回显密钥、`path`/`config_path` 解析、写入后由运行期解析器与 `ToolRegistry` 正常读取，以及 `build_agent` 的注册与系统提示词注入。
-- `tests/test_tui.py`：Textual 启动、流式回复、取消回滚、工具调用卡片默认折叠、系统剪贴板粘贴、字符宽度归一化、系统提示词折叠面板、对话框下方与侧栏的「上下文 / 窗口 / 占比」用量栏、窗口未知时的「128k 默认」标记、`/context` 明细、斜杠菜单的打开 / 过滤 / Esc 关闭 / 精确命令选择、模板回填、`/refine` 回填、`/compact` 压缩与两栏对照面板、80% 阈值后的输入拦截与压缩恢复、`/save` / `/new` / `/resume` 的保存与恢复、会话选择面板、`/session` / `/rename` / `/mcp`、侧栏 MCP 区域在异步加载后的刷新，以及无边框样式约束。
+仓库不随附 `tests/` 目录。修改后建议至少执行：
+
+```powershell
+.\.venv\Scripts\ruff.exe check core tui scripts
+```
+
+涉及核心流程（工具循环、上下文压缩、MCP、TUI）的改动，建议在本地按功能做一次手工冒烟：
+启动 `tui`、发一轮带工具的对话、检查工具卡片与上下文栏，再验证 `/compact`、`/save`、
+`/resume` 等常用命令。工具声明与实现的一致性由 `ToolRegistry` 在启动时校验。

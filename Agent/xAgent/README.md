@@ -59,13 +59,12 @@
   避免中英文混排造成边框/表格错位。
 - **可配置限额**：可选的单轮工具轮数上限（默认不限制）、文本读取上限、目录列出的最大条目数。
 - **安全默认值**：API Key 不会进入 `repr`、日志或 UI 事件；`config.ini` 已被 Git 忽略。
-- **核心可独立测试**：工具、Agent、配置和架构约束均可在无终端环境下测试，另有 TUI 冒烟测试。
+- **核心与 UI 解耦**：工具、Agent、配置均可在无终端环境下构建，TUI 只消费 `AgentEvent`。
 
 ## 工具清单（共 21 个）
 
 模型可调用的全部工具都由 `core/tools/specs.py` 声明、由对应的工具类实现，
-`ToolRegistry` 在构造时校验"声明与实现一一对应"，缺一不可。下表与
-`tests/test_docs_consistency.py` 双向校验。
+`ToolRegistry` 在构造时校验"声明与实现一一对应"，缺一不可。
 
 | # | 工具 | 类别 | 说明 | 只读 |
 | --- | --- | --- | --- | --- |
@@ -144,7 +143,6 @@ xAgent/
 │  ├─ dialog.py                  # 启动阶段对话框（配置已生成等）
 │  ├─ cli.py                     # 命令行入口
 │  └─ __main__.py                # python -m tui
-├─ tests/                        # 核心、TUI 冒烟、架构约束测试
 ├─ docs/
 │  ├─ architecture.md            # 分层设计与扩展指南
 │  └─ tui-preview.png
@@ -160,7 +158,7 @@ xAgent/
 要求 Python 3.11+，并确保系统 `PATH` 中有 `curl`（Windows 10+ 自带 `curl.exe`）。
 
 ```powershell
-cd E:\work\LLM\Agent\xAgent
+cd Agent/xAgent   # 在本仓库根目录执行
 
 # 首次运行：创建虚拟环境并安装
 py -3.11 -m venv .venv
@@ -183,13 +181,13 @@ Copy-Item config.example.ini config.ini
 .\.venv\Scripts\xagent.exe
 
 # 或显式指定工作区 / 配置文件 / MCP 配置
-.\.venv\Scripts\xagent.exe --workspace E:\work\my-project
+.\.venv\Scripts\xagent.exe --workspace D:\projects\demo
 .\.venv\Scripts\xagent.exe --config .\config.ini --workspace .\demo
-.\.venv\Scripts\xagent.exe --mcp-config E:\work\LLM\.mcp.json
+.\.venv\Scripts\xagent.exe --mcp-config D:\projects\demo\.mcp.json
 .\.venv\Scripts\xagent.exe --no-mcp
 
 # 也可以模块方式启动
-.\.venv\Scripts\python.exe -m tui -w E:\work\my-project
+.\.venv\Scripts\python.exe -m tui -w D:\projects\demo
 ```
 
 安装后也可以直接使用 `xagent` 命令（前提是虚拟环境已激活）。
@@ -685,18 +683,17 @@ xAgent 支持 [Agent Skills](https://agentskills.io/) 约定。程序初始化�
 1. **启动目录**：启动 xAgent 时的当前工作目录；
 2. **工作区**：`--workspace` 指定的目录，兼容从其他目录启动、但把 Skill 放在
    工作区里的场景；
-3. **自带目录**：xAgent 源码仓库根下的 `.agents/skills`，随代码一起分发。
+3. **项目根（可选）**：xAgent 源码根下的 `.agents/skills`。本仓库不随附示例 Skill，
+   需要时自行放入即可。
 
 启动目录既不是 Python 安装目录，也不是 xAgent 源码目录，它与 `--workspace`
-受控工作区相互独立。同名 Skill 以优先级高者为准（启动目录 > 工作区 > 自带目录）。
-把 Skill 放在仓库根的 `.agents/skills` 下，无论从哪个目录启动、指定哪个工作区，
-每次对话都能直接调用，不需要复制到每个项目里。
+受控工作区相互独立。同名 Skill 以优先级高者为准（启动目录 > 工作区 > 项目根）。
+把 Skill 放在上述任一 `.agents/skills` 下，每次对话都能直接调用，不需要复制到
+每个项目里。
 
-> **第三方 Skill 的来源与许可**：自带目录里的 `officecli`、`tianjicesuan-1.0.0`
-> 是对第三方内容的封装，各自的来源/许可见对应目录下的 `SOURCE.md`；
-> `guizang-ppt-skill` 为 AGPL-3.0，与仓库 MIT 许可不兼容，已被 `.gitignore`
-> 排除、不随仓库分发。`officecli.exe` 二进制同样不入库，使用前需按
-> `officecli/SKILL.md` 自行放置。
+> **本机 Skill 不入库**：`.agents/skills/` 已加入 `.gitignore`，仓库不再分发
+> `officecli`、`tianjicesuan-1.0.0` 等第三方封装；如需使用，请按各 Skill 的
+> `SKILL.md` / `SOURCE.md` 自行放置并遵守其原始许可。
 
 每个 Skill 子目录必须包含 `SKILL.md`，文件开头
 使用 YAML Frontmatter 声明 `name` 和 `description`：
@@ -934,30 +931,18 @@ core.agent ──► core.ports.ChatModel  ◄── core.llm.openai_chat (适�
 4. 新增模型供应商时，实现 `core.ports.ChatModel`，不修改 `FileAgent`。
 5. 新增文件工具时，同时更新 `tools/specs.py` 与 `tools/filesystem.py`，由注册表绑定。
 
-`tests/test_architecture.py` 会自动检查第 1 条约束。
+上述分层约束在代码评审时重点检查，`core` 与 `tui` 的导入边界应保持清晰。
 
-## 运行测试与静态检查
+## 静态检查
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\ruff.exe check core tui tests
-```
-
-当前测试数量以 `pytest -q` 的实时输出为准（其中真实 MCP Server 的联网测试默认跳过），
-不在此处写死数字，避免文档与代码漂移；`tests/test_docs_consistency.py` 会校验
-README 的工具清单与 `core/tools/specs.py` 双向一致。Ruff 要求无告警。
-
-真实 MCP Server 测试（需要联网）默认不运行，手动开启方式：
+仓库不随附测试目录，提交前至少执行 Ruff：
 
 ```powershell
-$env:XAGENT_MCP_LIVE_TEST = "1"
-# 可选：指定要使用的 MCP 配置，默认读取仓库上一级项目的 .mcp.json
-$env:XAGENT_MCP_CONFIG = "E:\work\LLM\.mcp.json"
-.\.venv\Scripts\python.exe -m pytest tests\test_mcp.py -q
+.\.venv\Scripts\ruff.exe check core tui scripts
 ```
 
-`tests/test_mcp.py` 还包含一个使用临时 stdio MCP Server 的端到端测试，覆盖连接、
-`list_tools()`、工具注册、参数转发、结构化结果、server 错误和单服务器故障隔离。
+Ruff 要求无告警。修改工具或配置后，建议按对应功能做一次手工冒烟验证；工具清单以
+`core/tools/specs.py` 为唯一来源，README 中的表格与其保持一致。
 
 ## 从单文件版迁移
 
@@ -970,4 +955,3 @@ $env:XAGENT_MCP_CONFIG = "E:\work\LLM\.mcp.json"
 | `_load_client()` | `core.config.load_config` + `OpenAIChatModel` |
 | `stream_chat()` / `run_tool_calls()` | `FileAgent.send()` + `AgentEvent` |
 | `print()` / `input()` | Textual `tui.app.FileAgentApp` |
-| `--self-test` | `tests/`（pytest） |
